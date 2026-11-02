@@ -1,0 +1,3 @@
+[submodule "vendor/lattice-swap"]
+	path = vendor/lattice-swap
+	url = https://github.com/0xLattice/lattice-swap
