@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { wasm } from 'lattice-swap-driver/wasm.js';
 import type { OffersState } from '../app';
-import { btc, nex, nexFor, parseBtc, refundAfter } from '../format';
+import { bounded, btc, nex, nexFor, parseBtc, refundAfter } from '../format';
 import type { Balance, Listed } from '../types';
 import { Row } from './ui';
 
@@ -18,6 +18,9 @@ export function SwapForm(props: {
   relay: string | null;
   offers: OffersState;
   offer: Listed | null;
+  /** The offer picked is no longer listed: the buyer picks again. */
+  pickGone: boolean;
+  onRepick: () => void;
   amount: string;
   setAmount: (value: string) => void;
   nexAddress: string;
@@ -39,10 +42,19 @@ export function SwapForm(props: {
       {props.relay === null && <NoRelay />}
       {props.relay !== null && offers.error !== null && (
         <p role="alert" class="error">
-          Could not read the relay's offers: {offers.error}
+          Could not read the relay's offers: {bounded(offers.error)}
         </p>
       )}
-      {props.relay !== null && offers.loaded && offers.error === null && offer === null && (
+      {props.pickGone && (
+        <div role="alert" class="box strong-border">
+          <span class="strong">The offer you picked is gone</span>
+          <span class="small muted">Its seller took it off the relay. Pick another to see its price.</span>
+          <button type="button" class="primary" onClick={props.onRepick}>
+            Pick another offer
+          </button>
+        </div>
+      )}
+      {props.relay !== null && offers.loaded && offers.error === null && !props.pickGone && offer === null && (
         <div role="status" class="box">
           No offers on the relay right now.
         </div>
@@ -93,7 +105,7 @@ export function SwapForm(props: {
               <Row label="You can pay">
                 {btc(offer.offer.quote.min_btc_amount)} – {btc(offer.offer.quote.max_btc_amount)} BTC
               </Row>
-              <Row label="If it doesn’t finish">BTC back in {refundAfter(offer.offer)}</Row>
+              <Row label="If it doesn’t finish">BTC back in {refundAfter(offer.offer)} with this page open</Row>
             </div>
           )}
         </div>
@@ -114,7 +126,7 @@ export function SwapForm(props: {
       </div>
       {error !== null && (
         <p role="alert" class="error">
-          {error}
+          {bounded(error)}
         </p>
       )}
       <button

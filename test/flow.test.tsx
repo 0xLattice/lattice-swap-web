@@ -66,6 +66,12 @@ describe('a swap through the page', () => {
     await until(() => posted(w).length === 2, 20_000);
     await screen.findByText('Refunding your BTC', {}, WAIT);
     expect(screen.getByText('Keep this page open')).toBeTruthy();
+    // Withdraw is still off: the refund spends the lock to the wallet.
+    tab(/^Wallet/);
+    fireEvent.input(screen.getByLabelText('Withdraw everything to'), { target: { value: call('newBitcoinKey', 'regtest').address } });
+    expect((screen.getByRole('button', { name: 'Withdraw' }) as HTMLButtonElement).disabled).toBe(true);
+    tab(/^Swap · running$/);
+    await screen.findByText('Refunding your BTC', {}, WAIT);
     confirm(w, posted(w)[1]);
     await until(() => posted(w).length === 3, 20_000);
     confirm(w, posted(w)[2]);
@@ -91,6 +97,38 @@ describe('a swap through the page', () => {
     click('Pick another offer');
     await screen.findByRole('heading', { name: 'Offers' });
     expect(w.a.posted).toEqual([]);
+  });
+
+  test('a recovery file taken before the lock does not answer the lock’s prompt', async () => {
+    const w = await world();
+    const address = await startSwap(w);
+    // Taken from the Wallet tab while funding: it holds the wallet key alone.
+    tab(/^Wallet/);
+    click('Download recovery file');
+    tab(/^Swap · running$/);
+    deposit(w, address, 1_100_000);
+    await until(() => posted(w).length === 1, 20_000);
+    await screen.findByText('Lock your BTC', {}, WAIT);
+    await screen.findByRole('button', { name: 'Download recovery file' }, WAIT);
+  });
+
+  test('an offer picked that leaves the relay must be picked again', async () => {
+    const w = await world();
+    render(<App config={w.config} />);
+    await screen.findByText(/best of 1/, {}, WAIT);
+    tab(/^Offers/);
+    await screen.findByRole('table', {}, WAIT);
+    click('Swap');
+    await screen.findByText(/1 NEX =/, {}, WAIT);
+    w.listed.splice(0);
+    // The list is read again on coming back to the swap.
+    tab(/^Offers/);
+    tab(/^Swap$/);
+    await screen.findByText('The offer you picked is gone', {}, WAIT);
+    expect(screen.queryByText(/1 NEX =/)).toBeNull();
+    expect((within(screen.getByRole('main')).getByRole('button', { name: 'Swap' }) as HTMLButtonElement).disabled).toBe(true);
+    click('Pick another offer');
+    await screen.findByRole('heading', { name: 'Offers' });
   });
 
   test('a seller that goes quiet before the lock ends the swap, nothing at stake', async () => {
@@ -170,6 +208,34 @@ describe('restore', () => {
     upload(file);
     await screen.findByText('refused: the store holds another wallet', {}, WAIT);
   });
+});
+
+test('a restore that waited on another tab carries on in this one once it closes', async () => {
+  const w = await world();
+  const wallet = await Wallet.open(driverOf(w));
+  const buyer = await Buyer.prepare(wallet, { offer: w.offer, policy: POLICY, nexAddress: w.nexAddress });
+  deposit(w, wallet.address, 1_100_000);
+  const stop = new AbortController();
+  const done = buyer.run(stop.signal);
+  await until(() => posted(w).length === 1, 20_000);
+  stop.abort();
+  await done;
+  const file = (await wallet.backup()).file as string;
+
+  const locks = new Locks();
+  const first = locks.tab();
+  const fresh = new MemoryStore();
+  render(<App config={{ ...w.config, driver: { ...w.config.driver, store: fresh, locks: locks.tab() } }} />);
+  // Another tab takes the lock before the restore.
+  await Wallet.open(driverOf(w, { store: new MemoryStore(), locks: first }));
+  tab(/^Settings/);
+  fireEvent.change(screen.getByLabelText('Restore from file'), {
+    target: { files: [new File([file], 'backup.json', { type: 'application/json' })] },
+  });
+  await screen.findByText('Lattice Swap is open in another tab', {}, WAIT);
+  locks.close(first);
+  await screen.findByText('Lock your BTC', {}, WAIT);
+  expect(screen.queryByText('Lattice Swap is open in another tab')).toBeNull();
 });
 
 test('a second tab waits, then carries on once the first closes', async () => {

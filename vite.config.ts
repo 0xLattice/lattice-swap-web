@@ -5,11 +5,36 @@ import preact from '@preact/preset-vite';
 // The driver, from the lattice-swap submodule pinned in vendor/.
 const driver = fileURLToPath(new URL('./vendor/lattice-swap/web/driver/src/', import.meta.url));
 
-export default defineConfig({
-  // Relative, so one build serves from any path: Pages' /lattice-swap-web/,
-  // or its /signet/ beside it.
+/** The built page's Content-Security-Policy: its own scripts and the
+ * wasm compiled from them, and requests to any https or wss server, since
+ * the buyer picks the Esplora and Nexus they trust. 'self' in connect-src
+ * lets the page fetch its own wasm when served over http locally. Build
+ * only: the dev server's inline HMR client and ws: would be refused. */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "connect-src 'self' https: wss:",
+].join('; ');
+
+export default defineConfig(({ mode }) => ({
+  // Relative, so the build serves from any path of its own origin.
   base: './',
-  plugins: [preact()],
+  // public/ holds the mainnet Pages site's CNAME (swap.lattice.build): the
+  // signet build is for another origin and carries none.
+  publicDir: mode === 'signet' ? false : 'public',
+  plugins: [
+    preact(),
+    {
+      name: 'csp',
+      apply: 'build',
+      transformIndexHtml: () => [
+        { tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: CSP }, injectTo: 'head-prepend' },
+      ],
+    },
+  ],
   resolve: {
     alias: [
       { find: /^lattice-swap-driver$/, replacement: `${driver}index.js` },
@@ -27,4 +52,4 @@ export default defineConfig({
     server: { deps: { external: [/vendor\/lattice-swap\/web\/driver\//] } },
     testTimeout: 60_000,
   },
-});
+}));

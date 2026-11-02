@@ -30,13 +30,18 @@ export async function world({ relay = true, store = new MemoryStore(), extra = {
   const a = await esplora(chain);
   const node = await nexus();
   const offer = testOffer('http://relay.invalid');
-  const board = await serve((_method: string, path: string) => (path === '/offers' ? [200, [JSON.parse(offer)]] : undefined));
+  /** The offers the relay lists, as text. */
+  const listed = [offer];
+  const board = await serve((_method: string, path: string) =>
+    path === '/offers' ? [200, listed.map((text) => JSON.parse(text))] : undefined,
+  );
   servers.push(a, node, board);
   const w = {
     chain,
     a,
     store,
     offer,
+    listed,
     seller: seller(offer),
     nexAddress: call('newNexKey').address as string,
     config: undefined as unknown as AppConfig,

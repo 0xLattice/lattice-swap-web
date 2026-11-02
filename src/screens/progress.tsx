@@ -1,6 +1,6 @@
 import type { Amounts } from '../app';
 import { download, reminder } from '../download';
-import { btc, nex, nexFor, when } from '../format';
+import { bounded, btc, nex, nexFor, when } from '../format';
 import type { Status } from '../types';
 import { Row } from './ui';
 
@@ -55,8 +55,10 @@ function Deadlines({ status }: { status: Status }) {
 
 const ENDS: Record<string, string> = {
   aborted: 'Stopped before anything was at stake. Your BTC is in your wallet.',
-  punished: 'The seller took the BTC through punish.',
-  drained: 'The swap ended: the NEX lock was already spent when your browser learned its key.',
+  punished:
+    'The seller took your BTC and no NEX arrived: your refund did not confirm before the punish height, so the seller claimed the lock.',
+  drained:
+    'The seller took your BTC and no NEX arrived: the NEX lock was already spent when your browser learned its key.',
 };
 
 export function Progress(props: {
@@ -71,12 +73,14 @@ export function Progress(props: {
   const at = stepOf(status);
   const { cancel } = status.deadlines;
   const swapping = status.step === 'swapping' || status.step === 'finishing';
-  const comeBack = cancel && `Come back by ${when(cancel.eta)} and keep this page open until your refund confirms.`;
+  // While the page must stay open, "come back by" would tell the buyer
+  // they may close it.
+  const comeBack = cancel && !status.mustStayOpen && `Come back by ${when(cancel.eta)} and keep this page open until your refund confirms.`;
   const saveReminder = () =>
     cancel &&
     download(
       `lattice-swap-${status.swapId.slice(0, 8)}.ics`,
-      reminder(status.swapId, cancel.eta, 'Lattice Swap: open the page for your refund', comeBack ?? ''),
+      reminder(status.swapId, cancel.eta, 'Lattice Swap: open the page for your refund', comeBack || ''),
       'text/calendar',
     );
   const swapAgain = (
@@ -110,7 +114,7 @@ export function Progress(props: {
         </div>
       )}
 
-      {swapping && cancel && status.warning === null && (
+      {swapping && cancel && !status.mustStayOpen && status.warning === null && (
         <div class="box small muted">
           If the swap stalls, come back by {when(cancel.eta)} and keep this page open until your refund confirms.{' '}
           <button type="button" class="link" onClick={saveReminder}>
@@ -122,7 +126,7 @@ export function Progress(props: {
       {swapping && status.warning !== null && (
         <div role="alert" class="box strong-border">
           <span class="strong">The swap is stalled</span>
-          <span class="small muted">{status.warning}</span>
+          <span class="small muted">{bounded(status.warning)}</span>
           {comeBack && <span class="small muted">{comeBack}</span>}
           <Deadlines status={status} />
         </div>
@@ -131,7 +135,7 @@ export function Progress(props: {
       {status.step === 'refunding' && (
         <div class="box strong-border">
           <span class="strong">Refunding your BTC</span>
-          {status.warning !== null && <span class="small muted">{status.warning}</span>}
+          {status.warning !== null && <span class="small muted">{bounded(status.warning)}</span>}
           <Deadlines status={status} />
         </div>
       )}

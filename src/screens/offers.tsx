@@ -1,5 +1,5 @@
 import type { OffersState } from '../app';
-import { btc, refundAfter } from '../format';
+import { bounded, btc, refundAfter } from '../format';
 import { NoRelay } from './swap';
 
 /** Where a seller learns to list offers: `lattice-swap offer --relay`. */
@@ -23,7 +23,7 @@ export function Offers({
       {relay === null && <NoRelay />}
       {offers.error !== null && (
         <p role="alert" class="error">
-          Could not read the relay's offers: {offers.error}
+          Could not read the relay's offers: {bounded(offers.error)}
         </p>
       )}
       {relay !== null && offers.loaded && offers.error === null && offers.list.length === 0 && (
@@ -51,7 +51,7 @@ export function Offers({
                   <td>
                     {btc(offer.quote.min_btc_amount)} – {btc(offer.quote.max_btc_amount)} BTC
                   </td>
-                  <td>BTC back in {refundAfter(offer)}</td>
+                  <td>BTC back in {refundAfter(offer)} with this page open</td>
                   <td class="action">
                     <button type="button" class="secondary" onClick={() => onPick(text)}>
                       Swap

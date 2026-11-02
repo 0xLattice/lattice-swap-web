@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
 import { saveSetting, type AppConfig } from '../config';
+import { bounded } from '../format';
 
 export function Settings({ config, onRestore }: { config: AppConfig; onRestore: (file: string) => Promise<void> }) {
   const [esplora, setEsplora] = useState(config.esplora);
@@ -62,7 +63,7 @@ export function Settings({ config, onRestore }: { config: AppConfig; onRestore: 
         />
         {restore !== null && (
           <p role={restore.ok ? 'status' : 'alert'} class={restore.ok ? 'small' : 'error'}>
-            {restore.text}
+            {bounded(restore.text)}
           </p>
         )}
       </div>

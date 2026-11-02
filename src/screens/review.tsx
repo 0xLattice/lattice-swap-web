@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { Wallet } from 'lattice-swap-driver';
 import { call } from 'lattice-swap-driver/wasm.js';
-import { btc, nex, nexFor, refundAfter } from '../format';
+import { bounded, btc, nex, nexFor, refundAfter } from '../format';
 import type { Offer } from '../types';
 import { Row } from './ui';
 
@@ -55,11 +55,14 @@ export function Review(props: {
           <code class="break">{props.nexAddress}</code>
         </Row>
       </div>
-      <span class="small muted">BTC back in your wallet after {refundAfter(offer)} if the seller vanishes.</span>
+      <span class="small muted">
+        If the seller vanishes, your BTC is back in your wallet in {refundAfter(offer)}. Keep this page open for the
+        refund: nothing refunds while it is closed.
+      </span>
       <div class="box strong-border small">Nexus is young; confirmations are cheap to fake today. Swap small amounts.</div>
       {error !== null && (
         <p role="alert" class="error">
-          {error}
+          {bounded(error)}
         </p>
       )}
       <button type="button" class="primary big-button" disabled={starting} onClick={start}>

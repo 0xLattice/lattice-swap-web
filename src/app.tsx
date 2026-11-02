@@ -5,8 +5,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Buyer, DEFAULTS, IndexedDBStore, Wallet } from 'lattice-swap-driver';
 import { swapKey } from 'lattice-swap-driver/wallet.js';
 import type { AppConfig } from './config';
-import { btc, parseBtc } from './format';
-import { listOffers } from './offers';
+import { bounded, btc, parseBtc } from './format';
+import { listOffers, offerFor } from './offers';
 import type { Balance, Listed, Status } from './types';
 import { download } from './download';
 import { SwapForm } from './screens/swap';
@@ -157,14 +157,16 @@ export function App({ config }: { config: AppConfig }) {
   const shownBalance: Balance | null = live && status ? status.wallet : balance;
   const swapRuns = status !== null && RUNNING.has(status.step);
   const active = buyer !== null && status !== null && status.outcome === null && status.step !== 'offer-gone';
-  const offer = offers.list.find((listed) => listed.text === chosen) ?? offers.list[0] ?? null;
+  const { offer, gone: pickGone } = offerFor(offers.list, chosen);
 
   async function backup() {
     if (wallet === null) return;
     try {
       const { name, file } = await wallet.backup();
       download(name, file);
-      if (status) setBackedUp(new Set(backedUp).add(status.swapId));
+      // Only a file taken once it covers the lock answers the lock's prompt:
+      // one taken before holds the wallet key and no more.
+      if (status?.backupCovers === 'lock') setBackedUp(new Set(backedUp).add(status.swapId));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -190,11 +192,13 @@ export function App({ config }: { config: AppConfig }) {
     setBuyer(null);
     setStatus(null);
     setAmounts(null);
+    setChosen(null);
     setScreen(next);
   }
 
   async function restored(file: string) {
     const w = await Wallet.restore(driverConfig, file);
+    setOtherTab(false);
     setWallet(w);
     if (!active) await resume(w);
   }
@@ -213,6 +217,8 @@ export function App({ config }: { config: AppConfig }) {
         relay={config.relay}
         offers={offers}
         offer={offer}
+        pickGone={pickGone}
+        onRepick={() => setScreen('offers')}
         amount={amount}
         setAmount={setAmount}
         nexAddress={nexAddress}
@@ -295,7 +301,7 @@ export function App({ config }: { config: AppConfig }) {
       <main>
         {error !== null && (
           <p role="alert" class="error">
-            {error}
+            {bounded(error)}
           </p>
         )}
         {body}

@@ -47,11 +47,18 @@ export function duration(ms: number): string {
   return `~${Math.round(hours / 24)} days`;
 }
 
-/** How long until a refund can confirm if the seller vanishes once the
- * lock is in: cancel at `t1` blocks, the refund once cancel is
- * `btc_confirmations` deep. */
+/** How long until the BTC is back if the seller vanishes, with the page
+ * open for the refund: the lock in a block, cancel `t1` blocks after it,
+ * the refund once cancel is `btc_confirmations` deep, and the refund that
+ * deep in turn. */
 export function refundAfter(offer: Offer): string {
-  return duration((offer.template.t1 + offer.template.btc_confirmations) * BLOCK_MS);
+  const { t1, btc_confirmations } = offer.template;
+  return duration((1 + t1 + 2 * btc_confirmations) * BLOCK_MS);
+}
+
+/** What a server or the driver said, cut to a length a page can show. */
+export function bounded(text: string, max = 240): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
 export function when(eta: number): string {

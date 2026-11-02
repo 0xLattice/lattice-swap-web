@@ -43,8 +43,28 @@ environment variable of the same name overrides them:
 | `VITE_RELAY` | none: the page says no relay is configured |
 
 `npm run build` writes the mainnet page to `dist/`. `npm run build:signet`
-writes the signet page to `dist-signet/`. The two use the same browser
-storage names, so serve them from different origins.
+writes the signet page to `dist-signet/`.
+
+### One origin per network
+
+Each network's page needs an origin of its own (scheme, host and port), not
+a path beside the other's. The browser keys everything the page keeps by
+origin, never by path: the IndexedDB store holding the wallet key and each
+swap's record, the Web Lock that keeps one tab at a time, and the saved
+Settings. Both builds use the same names for these. On one origin, a signet
+page would open the mainnet wallet and its swaps, and an open tab of one
+network would hold the other off as "open in another tab". Nor is a path a
+security boundary: any page on the origin can read the other's wallet key.
+
+- Mainnet: `https://swap.lattice.build`, this repository's Pages site.
+  `public/CNAME` names it, and only the mainnet build carries it.
+- Signet: not deployed from here, since a repository has one Pages site. To
+  host it, serve `dist-signet/` (or the release's `-signet.tar.gz`) from
+  its own origin, such as `https://swap-signet.lattice.build`.
+
+The built page carries a Content-Security-Policy: its own scripts and
+their wasm, and requests to any `https:` or `wss:` server, since the buyer
+picks the Esplora and Nexus servers they trust.
 
 ## Develop
 
@@ -69,7 +89,10 @@ To move to a newer driver, check out another lattice-swap commit in
 ## Deploy and release
 
 CI builds the wasm, then runs the lint, typecheck, tests and both builds.
-Each push to main deploys the mainnet build to GitHub Pages.
+Each push to main deploys the mainnet build to GitHub Pages, at
+`swap.lattice.build`: a `CNAME` record for it pointing at
+`0xlattice.github.io`, and the domain verified for the 0xLattice
+organization.
 
 A `v*` tag matching `package.json`'s version makes a draft release. It
 holds `lattice-swap-web-<version>-mainnet.tar.gz` and `-signet.tar.gz`, each

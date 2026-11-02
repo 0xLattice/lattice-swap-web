@@ -6,6 +6,7 @@ import { Fund } from '../src/screens/fund';
 import { Progress, stepOf } from '../src/screens/progress';
 import { WalletScreen } from '../src/screens/wallet';
 import { Offers } from '../src/screens/offers';
+import { SwapForm } from '../src/screens/swap';
 import type { Status } from '../src/types';
 
 const HOUR = 3_600_000;
@@ -102,6 +103,22 @@ describe('progress', () => {
     progress(status({ step: 'finishing', mustStayOpen: true, deadlines: DEADLINES }));
     expect(screen.getByRole('status').textContent).toBe('Keep this page openFinishing your swap. Leave this page open until it settles.');
     expect(current()).toMatch(/^3Finish/);
+    // Nothing says the page may close and be opened again later.
+    expect(screen.queryByText(/come back by/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save reminder (.ics)' })).toBeNull();
+  });
+
+  test('stalled while the page must stay open: no "come back by"', () => {
+    progress(status({ warning: 'broadcast: 503 down', mustStayOpen: true, deadlines: DEADLINES }));
+    expect(screen.getByRole('alert').textContent).toMatch(/^The swap is stalledbroadcast: 503 downCancel fromblock 120/);
+    expect(screen.queryByText(/come back by/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save reminder (.ics)' })).toBeNull();
+  });
+
+  test('a long warning is cut to a length the page can show', () => {
+    progress(status({ warning: `esplora: ${'x'.repeat(5000)}`, deadlines: DEADLINES }));
+    const text = screen.getByText(/^esplora: x+…$/).textContent!;
+    expect(text.length).toBe(240);
   });
 
   test('a failure while swapping shows as stalled, with the deadlines', () => {
@@ -139,8 +156,11 @@ describe('progress', () => {
 
   test.each([
     ['aborted', 'Stopped before anything was at stake. Your BTC is in your wallet.'],
-    ['punished', 'The seller took the BTC through punish.'],
-    ['drained', 'The swap ended: the NEX lock was already spent when your browser learned its key.'],
+    [
+      'punished',
+      'The seller took your BTC and no NEX arrived: your refund did not confirm before the punish height, so the seller claimed the lock.',
+    ],
+    ['drained', 'The seller took your BTC and no NEX arrived: the NEX lock was already spent when your browser learned its key.'],
   ] as const)('done, %s', (outcome, text) => {
     progress(status({ step: 'done', outcome }));
     expect(screen.getByText(text)).toBeTruthy();
@@ -214,7 +234,7 @@ describe('offers', () => {
     const onPick = vi.fn();
     render(<Offers relay="https://relay.example" offers={{ list: [offer(2_000_000)], error: null, loaded: true }} onPick={onPick} />);
     const cells = [...document.querySelectorAll('tbody td')].map((td) => td.textContent);
-    expect(cells.slice(0, 3)).toEqual(['0.02000000 BTC', '0.00010000 – 0.01000000 BTC', 'BTC back in ~2 days']);
+    expect(cells.slice(0, 3)).toEqual(['0.02000000 BTC', '0.00010000 – 0.01000000 BTC', 'BTC back in ~2 days with this page open']);
     fireEvent.click(screen.getByRole('button', { name: 'Swap' }));
     expect(onPick).toHaveBeenCalledWith('2000000');
     expect(screen.getByRole('link', { name: 'Set up a seller →' }).getAttribute('href')).toMatch(/lattice-swap#swapping-through-a-relay$/);
@@ -224,5 +244,54 @@ describe('offers', () => {
     render(<Offers relay={null} offers={{ list: [], error: null, loaded: false }} onPick={vi.fn()} />);
     expect(screen.getByText('No relay configured')).toBeTruthy();
     expect(document.querySelector('table')).toBeNull();
+  });
+});
+
+describe('swap', () => {
+  const listed = {
+    text: 'offer',
+    offer: {
+      quote: { price: 2_000_000, min_btc_amount: 10_000, max_btc_amount: 1_000_000 },
+      template: { swap_id: 's', btc_fee: 1000, nex_fee: 100, t1: 20, t2: 20, btc_confirmations: 1, nex_confirmations: 1, margin: 3, nexus_genesis: 'g' },
+      btc_network: 'regtest',
+      relay: 'https://relay.example',
+      seller: 's',
+    },
+  };
+  const form = (amount: string, over: { offer?: typeof listed | null; pickGone?: boolean } = {}) =>
+    render(
+      <SwapForm
+        relay="https://relay.example"
+        offers={{ list: [listed], error: null, loaded: true }}
+        offer={over.offer === undefined ? listed : over.offer}
+        pickGone={over.pickGone ?? false}
+        onRepick={vi.fn()}
+        amount={amount}
+        setAmount={vi.fn()}
+        nexAddress=""
+        setNexAddress={vi.fn()}
+        balance={null}
+        onWallet={vi.fn()}
+        onReview={vi.fn()}
+      />,
+    );
+
+  test.each([
+    ['0.00009999', false],
+    ['0.0001', true],
+    ['0.01', true],
+    ['0.01000001', false],
+  ])('%s BTC is in the offer’s range: %s', (amount, inRange) => {
+    form(amount);
+    expect(screen.queryByText('Pay between 0.00010000 and 0.01000000 BTC') === null).toBe(inRange);
+    expect(screen.getByTestId('quote').textContent === '0').toBe(!inRange);
+  });
+
+  test('a pick no longer listed says so and asks for another', () => {
+    form('0.01', { offer: null, pickGone: true });
+    expect(screen.getByRole('alert').textContent).toMatch(/^The offer you picked is gone/);
+    expect(screen.queryByText('No offers on the relay right now.')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Swap' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Pick another offer' })).toBeTruthy();
   });
 });

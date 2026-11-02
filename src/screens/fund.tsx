@@ -1,4 +1,4 @@
-import { btc } from '../format';
+import { bounded, btc } from '../format';
 import type { Status } from '../types';
 import { Address, Row } from './ui';
 
@@ -12,7 +12,7 @@ export function Fund({ status, onPickAnother }: { status: Status; onPickAnother:
         <h1>Fund your wallet</h1>
         <div role="status" class="box strong-border">
           <span class="strong">That offer is gone. Your funds are still in your wallet; pick another.</span>
-          {status.warning !== null && <span class="small muted">{status.warning}</span>}
+          {status.warning !== null && <span class="small muted">{bounded(status.warning)}</span>}
           <button type="button" class="primary" onClick={onPickAnother}>
             Pick another offer
           </button>
@@ -34,7 +34,7 @@ export function Fund({ status, onPickAnother }: { status: Status; onPickAnother:
       <span class="small muted">The swap starts once enough is confirmed.</span>
       {status.warning !== null && (
         <p role="alert" class="error">
-          {status.warning}
+          {bounded(status.warning)}
         </p>
       )}
     </section>

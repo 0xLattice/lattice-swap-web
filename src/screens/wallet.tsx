@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import type { Wallet } from 'lattice-swap-driver';
-import { btc } from '../format';
+import { bounded, btc } from '../format';
 import type { Balance } from '../types';
 import { Address } from './ui';
 
@@ -28,7 +28,7 @@ export function WalletScreen(props: {
         </button>
         {error !== null && (
           <p role="alert" class="error">
-            {error}
+            {bounded(error)}
           </p>
         )}
       </section>
@@ -81,7 +81,7 @@ export function WalletScreen(props: {
         )}
         {error !== null && (
           <p role="alert" class="error">
-            {error}
+            {bounded(error)}
           </p>
         )}
       </div>
