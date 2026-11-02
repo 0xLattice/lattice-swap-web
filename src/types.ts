@@ -30,6 +30,17 @@ export interface Status {
   };
   mustStayOpen: boolean;
   backupCovers: 'wallet' | 'lock';
+  /** Taken its offer and not ended: no other swap, and no withdrawal. */
+  running: boolean;
+  /** The swap's terms: sat, sat a NEX, and NEX base units. */
+  btc_amount: number;
+  price: number;
+  nex_amount: number;
+  /** How deep each lock must be. */
+  btc_confirmations: number;
+  nex_confirmations: number;
+  /** Where the NEX goes; null for a swap recorded before it was kept. */
+  nexAddress: string | null;
   tip: number | null;
   warning: string | null;
 }

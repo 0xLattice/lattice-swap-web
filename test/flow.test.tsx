@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/pre
 import { MemoryStore, Wallet, Buyer } from 'lattice-swap-driver';
 import { Locks, until } from '../vendor/lattice-swap/web/driver/test/fakes.js';
 import { App } from '../src/app';
+import { btc } from '../src/format';
 import { call, confirm, deposit, driverOf, posted, POLICY, world, type World } from './world';
 
 const WAIT = { timeout: 20_000 };
@@ -20,7 +21,9 @@ async function startSwap(w: World, amount = '0.01') {
   fireEvent.input(screen.getByLabelText('Send NEX to'), { target: { value: w.nexAddress } });
   click('Swap');
   await screen.findByRole('heading', { name: 'Review swap' }, WAIT);
-  await waitFor(() => expect(screen.getByText(/^~0\.0000\d+ BTC$/)).toBeTruthy(), WAIT);
+  // A fresh browser: no key made to price the fee, only once the swap starts.
+  expect(screen.getByText('Network fee').nextSibling?.textContent).toBe('unknown');
+  expect(await w.store.get('wallet')).toBeNull();
   click('Start swap');
   await screen.findByRole('heading', { name: 'Fund your wallet' }, WAIT);
   const address = (await Wallet.open(driverOf(w))).address as string;
@@ -151,6 +154,45 @@ describe('a swap through the page', () => {
     await screen.findByLabelText('You pay');
   });
 
+  test('a fresh browser makes no key until a swap starts', async () => {
+    const w = await world();
+    render(<App config={w.config} />);
+    await screen.findByText(/best of 1/, {}, WAIT);
+    tab(/^Wallet/);
+    await screen.findByRole('button', { name: 'Make a wallet' });
+    expect(await w.store.get('wallet')).toBeNull();
+  });
+
+  test('a browser with a wallet prices the fee from it', async () => {
+    const w = await world();
+    const wallet = await Wallet.open(driverOf(w));
+    deposit(w, wallet.address, 1_100_000);
+    render(<App config={w.config} />);
+    await screen.findByText(/best of 1/, {}, WAIT);
+    fireEvent.input(screen.getByLabelText('You pay'), { target: { value: '0.01' } });
+    fireEvent.input(screen.getByLabelText('Send NEX to'), { target: { value: w.nexAddress } });
+    click('Swap');
+    await screen.findByRole('heading', { name: 'Review swap' }, WAIT);
+    const { need } = await wallet.need(1_000_000);
+    await waitFor(() => expect(screen.getByText('Network fee').nextSibling?.textContent).toBe(`~${btc(need - 1_000_000)} BTC`), WAIT);
+  });
+
+  test('a resume that fails is tried again on the poll', async () => {
+    const w = await world();
+    const wallet = await Wallet.open(driverOf(w));
+    await Buyer.prepare(wallet, { offer: w.offer, policy: POLICY, nexAddress: w.nexAddress });
+    // The store fails its first listing.
+    const keys = w.store.keys.bind(w.store);
+    let fail = 1;
+    w.store.keys = async () => {
+      if (fail-- > 0) throw new Error('store busy');
+      return keys();
+    };
+    render(<App config={w.config} />);
+    await screen.findByRole('heading', { name: 'Fund your wallet' }, WAIT);
+    expect(screen.queryByText(/store busy/)).toBeNull();
+  });
+
   test('withdraws the whole balance when no swap runs', async () => {
     const w = await world();
     const wallet = await Wallet.open(driverOf(w));
@@ -196,6 +238,47 @@ describe('restore', () => {
     expect(screen.getByRole('heading', { name: /0\.01000000 BTC → 0\.5 NEX/ })).toBeTruthy();
     tab(/^Wallet/);
     expect(screen.getByText(address)).toBeTruthy();
+  });
+
+  /** A store holding `w`'s wallet and a copy of `record` as swap ff…ff,
+   * as `over` changes it. */
+  async function beside(w: World, record: Record<string, unknown>, over: Record<string, unknown>) {
+    const store = new MemoryStore();
+    const wallet = await Wallet.open(driverOf(w));
+    await store.put('wallet', { wif: wallet.key.wif });
+    await store.put(`swap:${'ff'.repeat(32)}`, { ...record, swap_id: 'ff'.repeat(32), ...over });
+    return store;
+  }
+
+  test('after a restore the page follows the swap the file runs', async () => {
+    const w = await world();
+    const { file } = await funded(w);
+    const id = JSON.parse(w.offer).template.swap_id;
+    const record = await w.store.get(`swap:${id}`);
+    // Nothing left to fund another swap: the page's own stays unfunded.
+    w.chain.utxos.clear();
+    const store = await beside(w, record, { taken: false });
+    render(<App config={{ ...w.config, driver: { ...w.config.driver, store } }} />);
+    await screen.findByRole('heading', { name: 'Fund your wallet' }, WAIT);
+    tab(/^Settings/);
+    upload(file);
+    await screen.findByText('Lock your BTC', {}, WAIT);
+  });
+
+  test('a restore whose swap would run beside the page’s says so plainly', async () => {
+    const w = await world();
+    const { file } = await funded(w);
+    const record = await w.store.get(`swap:${JSON.parse(w.offer).template.swap_id}`);
+    const store = await beside(w, record, {});
+    render(<App config={{ ...w.config, driver: { ...w.config.driver, store } }} />);
+    await screen.findByText('Lock your BTC', {}, WAIT);
+    tab(/^Settings/);
+    upload(file);
+    await screen.findByText(
+      'Not restored: this file holds a running swap, and this browser runs another. One swap at a time: restore it once that one ends.',
+      {},
+      WAIT,
+    );
   });
 
   test('a browser holding another wallet refuses the file', async () => {

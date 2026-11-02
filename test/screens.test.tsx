@@ -22,6 +22,13 @@ function status(over: Partial<Status> = {}): Status {
     deadlines: { cancel: null, refund: null, punish: null },
     mustStayOpen: false,
     backupCovers: 'wallet',
+    running: true,
+    btc_amount: 1_000_000,
+    price: 2_000_000,
+    nex_amount: 500_000,
+    btc_confirmations: 3,
+    nex_confirmations: 2,
+    nexAddress: 'bafynexaddress',
     tip: 100,
     warning: null,
     ...over,
@@ -38,7 +45,6 @@ const progress = (s: Status, backedUp = false) =>
   render(
     <Progress
       status={s}
-      amounts={{ btc: 1_000_000, price: 2_000_000 }}
       backedUp={backedUp}
       onBackup={vi.fn()}
       onWithdraw={vi.fn()}
@@ -72,19 +78,32 @@ describe('progress', () => {
 
   test('the seller’s step shows the NEX lock once seen', () => {
     progress(status({ confirmations: { funding: 2, lockSpend: null, cancelSpend: null, nexLock: 1 } }));
-    expect(current()).toMatch(/Seller locks NEX.*NEX lock is seen, 1 confirmation\./);
+    expect(current()).toMatch(/Seller locks NEX.*NEX lock is seen, 1 of 2 confirmations\./);
+  });
+
+  test('the lock’s depth is shown of the depth the swap asks for', () => {
+    progress(status({ confirmations: { funding: 1, lockSpend: null, cancelSpend: null, nexLock: null } }));
+    expect(current()).toMatch(/Your lock has 1 of 3 confirmations\./);
+  });
+
+  test('the amounts and the NEX address are status()’s', () => {
+    // A NEX amount other than the price gives: the terms say what arrives.
+    progress(status({ step: 'done', outcome: 'swapped', btc_amount: 30_000, nex_amount: 12_345_678 }));
+    expect(screen.getByRole('heading').textContent).toBe('0.00030000 BTC → 12.345678 NEX');
+    expect(screen.getByText('bafynexaddress')).toBeTruthy();
+    expect(current()).toMatch(/12\.345678 NEX is in your address\./);
   });
 
   test('the recovery file is asked for once it covers the lock, until downloaded', () => {
     const onBackup = vi.fn();
     render(
-      <Progress status={status({ backupCovers: 'lock' })} amounts={null} backedUp={false} onBackup={onBackup} onWithdraw={vi.fn()} onSwapAgain={vi.fn()} />,
+      <Progress status={status({ backupCovers: 'lock' })} backedUp={false} onBackup={onBackup} onWithdraw={vi.fn()} onSwapAgain={vi.fn()} />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Download recovery file' }));
     expect(onBackup).toHaveBeenCalled();
     // The swap's steps are still there: the prompt blocks nothing.
     expect(current()).toMatch(/Lock your BTC/);
-    expect(screen.getByRole('heading').textContent).toBe('Your swap');
+    expect(screen.getByRole('heading').textContent).toBe('0.01000000 BTC → 0.5 NEX');
   });
 
   test('a downloaded file is not asked for again', () => {
@@ -140,7 +159,7 @@ describe('progress', () => {
   test('refunded offers a withdrawal and another swap', () => {
     const onWithdraw = vi.fn();
     render(
-      <Progress status={status({ step: 'refunded', outcome: 'refunded' })} amounts={null} backedUp={false} onBackup={vi.fn()} onWithdraw={onWithdraw} onSwapAgain={vi.fn()} />,
+      <Progress status={status({ step: 'refunded', outcome: 'refunded' })} backedUp={false} onBackup={vi.fn()} onWithdraw={onWithdraw} onSwapAgain={vi.fn()} />,
     );
     expect(screen.getByText('Refunded. Your BTC is back in your wallet.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Withdraw' }));

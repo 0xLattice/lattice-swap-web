@@ -11,17 +11,21 @@ The page shows only what the driver exposes. Each screen follows
 `Buyer#status()`:
 
 - **Swap** and **Review**: the best offer on the relay, an amount in its
-  range, the price, and the funding fee the driver would pay at today's rate.
+  range, the price, and the funding fee the driver would pay at today's rate
+  (`wallet.need`). A browser with no wallet shows the fee as unknown: the
+  key is made only when you start a swap, make a wallet or restore one.
 - **Fund your wallet** (`step: fund-wallet`): the wallet's address, with
   `need`, `wallet.confirmed` and `wallet.unconfirmed`. If the offer is gone
   (`step: offer-gone`), it says so and you pick another.
-- **Progress** (`swapping`, `finishing`, `done`): four steps from
-  `confirmations`. It asks for the recovery file once `backupCovers` is
+- **Progress** (`swapping`, `finishing`, `done`): the amounts and NEX
+  address from `btc_amount`, `nex_amount` and `nexAddress`, and four steps
+  from `confirmations`, each "n of" `btc_confirmations` or
+  `nex_confirmations`. It asks for the recovery file once `backupCovers` is
   `lock`, shows `deadlines` as a reminder, and shows the "Keep this page
   open" banner while `mustStayOpen`. A `warning` while swapping shows as
   stalled. It also shows `refunding`, `refunded`, and each `outcome`.
-- **Wallet**: the balance and deposit address. Withdraw is off while a swap
-  holds the wallet's outputs.
+- **Wallet**: the balance and deposit address. Withdraw is off while the
+  swap is `running`.
 - **Settings**: the Esplora and Nexus read URLs, which you trust for what
   they report, and Restore from a recovery file.
 
@@ -68,8 +72,9 @@ picks the Esplora and Nexus servers they trust.
 
 ## Develop
 
-Rust with the `wasm32-unknown-unknown` target, a clang that has the
-WebAssembly target, wasm-bindgen-cli 0.2.130, and Node 22 or later:
+The Rust that `vendor/lattice-swap/rust-toolchain.toml` pins (rustup
+installs it, with the `wasm32-unknown-unknown` target), a clang that has
+the WebAssembly target, wasm-bindgen-cli 0.2.130, and Node 22 or later:
 
 ```sh
 git submodule update --init

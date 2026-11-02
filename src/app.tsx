@@ -3,7 +3,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Buyer, DEFAULTS, IndexedDBStore, Wallet } from 'lattice-swap-driver';
-import { swapKey } from 'lattice-swap-driver/wallet.js';
 import type { AppConfig } from './config';
 import { bounded, btc, parseBtc } from './format';
 import { listOffers, offerFor } from './offers';
@@ -20,20 +19,13 @@ import { OtherTab } from './screens/other-tab';
 
 type Screen = 'swap' | 'review' | 'status' | 'offers' | 'wallet' | 'settings';
 
-/** Steps in which the swap's funding holds the wallet's outputs: the
- * driver refuses a withdrawal then. */
-const RUNNING = new Set(['swapping', 'finishing', 'refunding']);
+/** `buyer.status()`, whose JSDoc types it only as an object. */
+const statusOf = (buyer: Buyer) => buyer.status() as Status;
 
 export interface OffersState {
   list: Listed[];
   error: string | null;
   loaded: boolean;
-}
-
-/** What a swap pays and gets, from its record: `status()` does not say. */
-export interface Amounts {
-  btc: number;
-  price: number;
 }
 
 export function App({ config }: { config: AppConfig }) {
@@ -44,7 +36,6 @@ export function App({ config }: { config: AppConfig }) {
   const [buyer, setBuyer] = useState<Buyer | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [runEnded, setRunEnded] = useState(false);
-  const [amounts, setAmounts] = useState<Amounts | null>(null);
   const [offers, setOffers] = useState<OffersState>({ list: [], error: null, loaded: false });
   const [chosen, setChosen] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
@@ -63,6 +54,7 @@ export function App({ config }: { config: AppConfig }) {
       ...config.driver,
       store: (config.driver?.store as IndexedDBStore | undefined) ?? new IndexedDBStore(),
       onWaiting: () => setOtherTab(true),
+      onAcquired: () => setOtherTab(false),
     }),
     // One store and one wallet for the page's life.
     [],
@@ -75,10 +67,8 @@ export function App({ config }: { config: AppConfig }) {
     const stop = new AbortController();
     run.current = stop;
     setBuyer(next);
-    setStatus(next.status());
+    setStatus(statusOf(next));
     setRunEnded(false);
-    const record = await driverConfig.store.get(swapKey(next.swapId));
-    setAmounts(record ? { btc: record.policy.btc_amount, price: record.policy.price } : null);
     next.addEventListener('status', (event) => setStatus((event as CustomEvent<Status>).detail));
     next
       .run(stop.signal)
@@ -86,7 +76,7 @@ export function App({ config }: { config: AppConfig }) {
       .finally(() => {
         if (run.current !== stop) return;
         setRunEnded(true);
-        setBalance(next.status().wallet);
+        setBalance(statusOf(next).wallet);
       });
   }
 
@@ -97,7 +87,7 @@ export function App({ config }: { config: AppConfig }) {
     const ids = running !== null ? [running] : await w.swaps();
     for (const id of ids) {
       const resumed = await Buyer.resume(w, id);
-      if (resumed.status().outcome === null) {
+      if (statusOf(resumed).outcome === null) {
         await follow(resumed);
         setScreen('status');
         return;
@@ -107,19 +97,40 @@ export function App({ config }: { config: AppConfig }) {
 
   async function open(): Promise<Wallet> {
     const w = await Wallet.open(driverConfig);
-    setOtherTab(false);
     setWallet(w);
     return w;
   }
 
+  const poll = (driverConfig as { poll?: number }).poll ?? DEFAULTS.poll;
+
   // The wallet is opened at once if the store holds one; otherwise only
-  // when the buyer needs it, so a fresh browser can still restore one.
+  // when the buyer starts a swap or makes one, so a fresh browser makes no
+  // key and can still restore one. A failed resume, a store read, is tried
+  // again on the driver's poll.
   useEffect(() => {
-    (async () => {
-      if ((await driverConfig.store.get('wallet')) === null) return;
-      await resume(await open());
-    })().catch((e: Error) => setError(e.message));
-    return () => run.current?.abort();
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let opened: Wallet | null = null;
+    const attempt = async () => {
+      try {
+        if (opened === null) {
+          if (!(await Wallet.exists(driverConfig))) return;
+          opened = await open();
+        }
+        await resume(opened);
+        if (!stopped) setError(null);
+      } catch (e) {
+        if (stopped) return;
+        setError(`Could not resume your swap, trying again: ${(e as Error).message}`);
+        timer = setTimeout(attempt, poll);
+      }
+    };
+    attempt();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      run.current?.abort();
+    };
   }, []);
 
   async function refreshOffers() {
@@ -147,15 +158,15 @@ export function App({ config }: { config: AppConfig }) {
         () => {},
       );
     read();
-    const timer = setInterval(read, (driverConfig as { poll?: number }).poll ?? DEFAULTS.poll);
+    const timer = setInterval(read, poll);
     return () => {
       stopped = true;
       clearInterval(timer);
     };
-  }, [wallet, live, driverConfig]);
+  }, [wallet, live, poll]);
 
   const shownBalance: Balance | null = live && status ? status.wallet : balance;
-  const swapRuns = status !== null && RUNNING.has(status.step);
+  const swapRuns = status?.running ?? false;
   const active = buyer !== null && status !== null && status.outcome === null && status.step !== 'offer-gone';
   const { offer, gone: pickGone } = offerFor(offers.list, chosen);
 
@@ -191,16 +202,27 @@ export function App({ config }: { config: AppConfig }) {
     run.current = null;
     setBuyer(null);
     setStatus(null);
-    setAmounts(null);
     setChosen(null);
     setScreen(next);
   }
 
+  /** The file's wallet, and the swap it runs if this page follows
+   * another: restore refuses a file whose swap would run beside the
+   * store's, so at most one runs. */
   async function restored(file: string) {
-    const w = await Wallet.restore(driverConfig, file);
-    setOtherTab(false);
+    let w: Wallet;
+    try {
+      w = await Wallet.restore(driverConfig, file);
+    } catch (e) {
+      const message = (e as Error).message;
+      if (/would both run/.test(message)) {
+        throw new Error('Not restored: this file holds a running swap, and this browser runs another. One swap at a time: restore it once that one ends.');
+      }
+      throw e;
+    }
     setWallet(w);
-    if (!active) await resume(w);
+    const running = await w.running();
+    if (running !== null ? running !== buyer?.swapId : !active) await resume(w);
   }
 
   const tab = (name: Screen, label: string) => (
@@ -225,13 +247,10 @@ export function App({ config }: { config: AppConfig }) {
         setNexAddress={setNexAddress}
         balance={shownBalance}
         onWallet={() => setScreen('wallet')}
-        onReview={async () => {
-          if (wallet === null) await open();
-          setScreen('review');
-        }}
+        onReview={async () => setScreen('review')}
       />
     );
-  else if (screen === 'review' && offer !== null && wallet !== null)
+  else if (screen === 'review' && offer !== null)
     body = (
       <Review
         wallet={wallet}
@@ -249,7 +268,6 @@ export function App({ config }: { config: AppConfig }) {
       ) : (
         <Progress
           status={status}
-          amounts={amounts}
           backedUp={backedUp.has(status.swapId)}
           onBackup={backup}
           onWithdraw={() => setScreen('wallet')}

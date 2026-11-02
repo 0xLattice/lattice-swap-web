@@ -1,10 +1,10 @@
-import type { Amounts } from '../app';
 import { download, reminder } from '../download';
-import { bounded, btc, nex, nexFor, when } from '../format';
+import { bounded, btc, nex, when } from '../format';
 import type { Status } from '../types';
 import { Row } from './ui';
 
-const confirmations = (n: number | null) => `${n} confirmation${n === 1 ? '' : 's'}`;
+/** `n` of the `of` confirmations the swap asks for. */
+const confirmations = (n: number | null, of: number) => `${n ?? 0} of ${of} confirmation${of === 1 ? '' : 's'}`;
 
 const STEPS = ['Lock your BTC', 'Seller locks NEX', 'Finish', 'NEX received'];
 
@@ -18,15 +18,15 @@ export function stepOf(status: Status): number | null {
   return null;
 }
 
-function detail(status: Status, at: number, amounts: Amounts | null): string {
+function detail(status: Status, at: number): string {
   const { funding, nexLock } = status.confirmations;
   if (at === 0) return funding === null ? 'Locking BTC from your wallet.' : 'Your lock is in the mempool, waiting for a block.';
   if (at === 1) {
-    if (nexLock !== null) return `The seller’s NEX lock is seen, ${confirmations(nexLock)}.`;
-    return `Your lock has ${confirmations(funding)}. Waiting for the seller to lock NEX on Nexus. Nothing to do.`;
+    if (nexLock !== null) return `The seller’s NEX lock is seen, ${confirmations(nexLock, status.nex_confirmations)}.`;
+    return `Your lock has ${confirmations(funding, status.btc_confirmations)}. Waiting for the seller to lock NEX on Nexus. Nothing to do.`;
   }
   if (at === 2) return 'Your browser completes the swap with the seller.';
-  return amounts ? `${nex(nexFor(amounts.btc, amounts.price))} NEX is in your address.` : 'The NEX is in your address.';
+  return `${nex(status.nex_amount)} NEX is in your address.`;
 }
 
 function Deadlines({ status }: { status: Status }) {
@@ -63,13 +63,12 @@ const ENDS: Record<string, string> = {
 
 export function Progress(props: {
   status: Status;
-  amounts: Amounts | null;
   backedUp: boolean;
   onBackup: () => void;
   onWithdraw: () => void;
   onSwapAgain: () => void;
 }) {
-  const { status, amounts } = props;
+  const { status } = props;
   const at = stepOf(status);
   const { cancel } = status.deadlines;
   const swapping = status.step === 'swapping' || status.step === 'finishing';
@@ -102,7 +101,12 @@ export function Progress(props: {
       )}
       <div>
         <div class="label">Swap</div>
-        <h1>{amounts ? `${btc(amounts.btc)} BTC → ${nex(nexFor(amounts.btc, amounts.price))} NEX` : 'Your swap'}</h1>
+        <h1>{`${btc(status.btc_amount)} BTC → ${nex(status.nex_amount)} NEX`}</h1>
+        {status.nexAddress !== null && (
+          <span class="small muted">
+            To <code class="break">{status.nexAddress}</code>
+          </span>
+        )}
       </div>
 
       {status.backupCovers === 'lock' && status.outcome === null && !props.backedUp && (
@@ -169,7 +173,7 @@ export function Progress(props: {
                 <span class="mark">{done ? '✓' : i + 1}</span>
                 <div class="step-body">
                   <span class="step-title">{title}</span>
-                  {current && <span class="small muted">{detail(status, i, amounts)}</span>}
+                  {current && <span class="small muted">{detail(status, i)}</span>}
                   {current && i === 3 && <div class="buttons">{swapAgain}</div>}
                 </div>
               </li>

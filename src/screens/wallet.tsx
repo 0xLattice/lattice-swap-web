@@ -39,8 +39,7 @@ export function WalletScreen(props: {
     setError(null);
     setSent(null);
     try {
-      // The txid: the driver's JSDoc-less `exclusive` hides it from TypeScript.
-      setSent((await wallet.withdraw(to.trim())) as unknown as string);
+      setSent(await wallet.withdraw(to.trim()));
       setTo('');
     } catch (e) {
       setError((e as Error).message);

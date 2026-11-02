@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { Wallet } from 'lattice-swap-driver';
-import { call } from 'lattice-swap-driver/wasm.js';
 import { bounded, btc, nex, nexFor, refundAfter } from '../format';
 import type { Offer } from '../types';
 import { Row } from './ui';
 
-/** The funding's fee, as the driver judges what the wallet needs before
- * it takes the offer: `walletNeed` over its spendable outputs at its fee
- * rate, less the amount. */
+/** The funding's fee: what the wallet needs for the swap, as the driver
+ * judges it before taking the offer, less the amount. */
 async function fundingFee(wallet: Wallet, amount: number): Promise<number> {
-  const { need } = call('walletNeed', { utxos: await wallet.spendable(), amount, fee_rate: await wallet.feeRate() });
+  const { need } = await wallet.need(amount);
   return need - amount;
 }
 
 export function Review(props: {
-  wallet: Wallet;
+  /** Null in a browser with no wallet yet: none is made to price the
+   * fee, only once the buyer starts. */
+  wallet: Wallet | null;
   offer: Offer;
   sats: number;
   nexAddress: string;
@@ -22,10 +22,11 @@ export function Review(props: {
   onBack: () => void;
 }) {
   const { offer, sats } = props;
-  const [fee, setFee] = useState<string>('…');
+  const [fee, setFee] = useState<string>(props.wallet === null ? 'unknown' : '…');
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   useEffect(() => {
+    if (props.wallet === null) return;
     fundingFee(props.wallet, sats).then(
       (f) => setFee(`~${btc(f)} BTC`),
       () => setFee('unknown'),
