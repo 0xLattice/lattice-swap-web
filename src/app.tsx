@@ -22,6 +22,12 @@ type Screen = 'swap' | 'review' | 'status' | 'offers' | 'wallet' | 'settings';
 /** `buyer.status()`, whose JSDoc types it only as an object. */
 const statusOf = (buyer: Buyer) => buyer.status() as Status;
 
+/** Whether a swap is still the buyer's to carry on: not ended, its offer
+ * not gone, and not cancelled. Only such a swap is resumed or shown as
+ * the header's running swap. */
+export const unfinished = (status: Status) =>
+  status.outcome === null && status.step !== 'offer-gone' && status.step !== 'cancelled';
+
 export interface OffersState {
   list: Listed[];
   error: string | null;
@@ -89,7 +95,7 @@ export function App({ config }: { config: AppConfig }) {
     const ids = running !== null ? [running] : await w.swaps();
     for (const id of ids) {
       const resumed = await Buyer.resume(w, id);
-      if (statusOf(resumed).outcome === null) {
+      if (unfinished(statusOf(resumed))) {
         await follow(resumed);
         setScreen('status');
         return;
@@ -171,7 +177,7 @@ export function App({ config }: { config: AppConfig }) {
 
   const shownBalance: Balance | null = live && status ? status.wallet : balance;
   const swapRuns = status?.running ?? false;
-  const active = buyer !== null && status !== null && status.outcome === null && status.step !== 'offer-gone';
+  const active = buyer !== null && status !== null && unfinished(status);
   const { offer, gone: pickGone } = offerFor(offers.list, chosen);
 
   async function backup() {
@@ -199,6 +205,23 @@ export function App({ config }: { config: AppConfig }) {
     });
     await follow(prepared);
     setScreen('status');
+  }
+
+  /** Drops the swap while it has not taken its offer; the driver refuses
+   * once it has, and the refusal is shown. */
+  async function cancel() {
+    if (buyer === null) return;
+    try {
+      await buyer.cancel();
+      clear('swap');
+    } catch (e) {
+      const message = (e as Error).message;
+      setError(
+        /has taken its offer/.test(message)
+          ? 'Not cancelled: the swap has already taken its offer. It runs on to its end or its refund; keep this page open.'
+          : message,
+      );
+    }
   }
 
   function clear(next: Screen) {
@@ -267,8 +290,8 @@ export function App({ config }: { config: AppConfig }) {
     );
   else if (screen === 'status' && status !== null)
     body =
-      status.step === 'fund-wallet' || status.step === 'offer-gone' ? (
-        <Fund status={status} onPickAnother={() => clear('offers')} />
+      status.step === 'fund-wallet' || status.step === 'offer-gone' || status.step === 'cancelled' ? (
+        <Fund status={status} onPickAnother={() => clear('offers')} onCancel={cancel} />
       ) : (
         <Progress
           status={status}

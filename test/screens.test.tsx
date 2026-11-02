@@ -2,6 +2,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/preact';
+import { unfinished } from '../src/app';
 import { Fund } from '../src/screens/fund';
 import { Progress, stepOf } from '../src/screens/progress';
 import { WalletScreen } from '../src/screens/wallet';
@@ -189,7 +190,7 @@ describe('progress', () => {
 
 describe('fund', () => {
   test('the address, and what is needed, confirmed and unconfirmed', () => {
-    render(<Fund status={status({ step: 'fund-wallet', need: 1_000_160, wallet: { address: 'bcrt1qexample', confirmed: 5_000, unconfirmed: 20_000 } })} onPickAnother={vi.fn()} />);
+    render(<Fund status={status({ step: 'fund-wallet', need: 1_000_160, wallet: { address: 'bcrt1qexample', confirmed: 5_000, unconfirmed: 20_000 } })} onPickAnother={vi.fn()} onCancel={vi.fn()} />);
     expect(screen.getAllByText('bcrt1qexample').length).toBe(1);
     expect(screen.getByRole('img', { name: 'QR code of bcrt1qexample' }).innerHTML).toMatch(/^<svg/);
     expect(screen.getByText('Needed').nextSibling?.textContent).toBe('0.01000160 BTC');
@@ -199,12 +200,35 @@ describe('fund', () => {
 
   test('the offer gone, the buyer sent to pick another', () => {
     const onPickAnother = vi.fn();
-    render(<Fund status={status({ step: 'offer-gone', warning: 'the offer is gone: the session ended' })} onPickAnother={onPickAnother} />);
+    render(<Fund status={status({ step: 'offer-gone', warning: 'the offer is gone: the session ended' })} onPickAnother={onPickAnother} onCancel={vi.fn()} />);
     expect(screen.getByRole('heading').textContent).toBe('Offer gone');
     expect(screen.getByText('That offer is gone. Your funds are still in your wallet; pick another.')).toBeTruthy();
     expect(screen.queryByText('Needed')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Pick another offer' }));
     expect(onPickAnother).toHaveBeenCalled();
+  });
+});
+
+describe('cancel', () => {
+  test('the fund screen cancels the swap', () => {
+    const onCancel = vi.fn(() => Promise.resolve());
+    render(<Fund status={status({ step: 'fund-wallet', need: 1_000_160 })} onPickAnother={vi.fn()} onCancel={onCancel} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel swap' }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  test('a cancelled swap says nothing was sent', () => {
+    render(<Fund status={status({ step: 'cancelled' })} onPickAnother={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.getByRole('heading').textContent).toBe('Swap cancelled');
+    expect(screen.queryByRole('button', { name: 'Cancel swap' })).toBeNull();
+  });
+
+  test('a cancelled swap, like one ended or whose offer is gone, is not carried on', () => {
+    expect(unfinished(status({ step: 'fund-wallet' }))).toBe(true);
+    expect(unfinished(status())).toBe(true);
+    expect(unfinished(status({ step: 'cancelled' }))).toBe(false);
+    expect(unfinished(status({ step: 'offer-gone' }))).toBe(false);
+    expect(unfinished(status({ step: 'done', outcome: 'swapped' }))).toBe(false);
   });
 });
 

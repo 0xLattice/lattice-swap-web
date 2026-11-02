@@ -1,7 +1,7 @@
 // Whole flows through the page, against the driver's fakes.
 
 import { describe, expect, test, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { MemoryStore, Wallet, Buyer } from 'lattice-swap-driver';
 import { Locks, until } from '../vendor/lattice-swap/web/driver/test/fakes.js';
 import { App } from '../src/app';
@@ -134,6 +134,59 @@ describe('a swap through the page', () => {
     expect((within(screen.getByRole('main')).getByRole('button', { name: 'Swap' }) as HTMLButtonElement).disabled).toBe(true);
     click('Pick another offer');
     await screen.findByRole('heading', { name: 'Offers' });
+  });
+
+  test('the buyer cancels from the fund screen, and a reload does not resume it', async () => {
+    const w = await world();
+    await startSwap(w);
+    const id = JSON.parse(w.offer).template.swap_id;
+    expect(await w.store.get(`swap:${id}`)).not.toBeNull();
+    click('Cancel swap');
+    await screen.findByLabelText('You pay', {}, WAIT);
+    expect(await w.store.get(`swap:${id}`)).toBeNull();
+    expect(within(screen.getByRole('banner')).queryByRole('button', { name: /^Swap · / })).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    // Reloaded: the page opens the wallet and carries no swap on.
+    cleanup();
+    const resume = vi.spyOn(Buyer, 'resume');
+    try {
+      render(<App config={w.config} />);
+      await screen.findByText(/best of 1/, {}, WAIT);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(resume).not.toHaveBeenCalled();
+      expect(screen.queryByRole('heading', { name: 'Fund your wallet' })).toBeNull();
+      expect(within(screen.getByRole('banner')).queryByRole('button', { name: /^Swap · / })).toBeNull();
+    } finally {
+      resume.mockRestore();
+    }
+    expect(w.a.posted).toEqual([]);
+  });
+
+  test('a cancel once the swap has taken its offer is refused, and the swap runs on', async () => {
+    const w = await world();
+    // The seller's session opens only when let: the take holds the swap
+    // lock from before it dials until it is saved as taken.
+    const open = w.seller.open;
+    let dialed = false;
+    let answer: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (answer = resolve));
+    w.seller.open = async (...args: unknown[]) => {
+      dialed = true;
+      await gate;
+      return open(...(args as Parameters<typeof open>));
+    };
+    const address = await startSwap(w);
+    deposit(w, address, 1_100_000);
+    await until(() => dialed, 20_000);
+    click('Cancel swap');
+    answer();
+    await screen.findByText(
+      'Not cancelled: the swap has already taken its offer. It runs on to its end or its refund; keep this page open.',
+      {},
+      WAIT,
+    );
+    await until(() => posted(w).length === 1, 20_000);
+    await screen.findByText('Lock your BTC', {}, WAIT);
   });
 
   test('a seller that goes quiet before the lock ends the swap, nothing at stake', async () => {
