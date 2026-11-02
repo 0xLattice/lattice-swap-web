@@ -37,9 +37,11 @@ jobs:
         with:
           path: dist
 
-  # The mainnet build, on GitHub Pages, from main.
+  # The mainnet build, on GitHub Pages, from main: only once the custom
+  # domain is set up (README, "Deploy and release"), so nothing is served
+  # from the organization's shared github.io origin.
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PAGES_CNAME == 'swap.lattice.build'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10

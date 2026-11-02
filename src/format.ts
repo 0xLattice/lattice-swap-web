@@ -33,9 +33,9 @@ export function parseBtc(text: string): number | null {
 }
 
 /** The base units `sats` buys at `price`, rounded down, as the driver's
- * `prepare` says. */
+ * `prepare` says; 0 at a price of 0, as `Quote::nex_amount` gives. */
 export function nexFor(sats: number, price: number): bigint {
-  return (BigInt(sats) * BASE) / BigInt(price);
+  return price === 0 ? 0n : (BigInt(sats) * BASE) / BigInt(price);
 }
 
 /** Roughly how long `ms` is. */

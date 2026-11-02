@@ -9,7 +9,7 @@ export function Fund({ status, onPickAnother }: { status: Status; onPickAnother:
   if (status.step === 'offer-gone') {
     return (
       <section class="narrow">
-        <h1>Fund your wallet</h1>
+        <h1>Offer gone</h1>
         <div role="status" class="box strong-border">
           <span class="strong">That offer is gone. Your funds are still in your wallet; pick another.</span>
           {status.warning !== null && <span class="small muted">{bounded(status.warning)}</span>}

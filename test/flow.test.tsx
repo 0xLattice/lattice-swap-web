@@ -1,12 +1,13 @@
 // Whole flows through the page, against the driver's fakes.
 
-import { describe, expect, test } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { describe, expect, test, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { MemoryStore, Wallet, Buyer } from 'lattice-swap-driver';
 import { Locks, until } from '../vendor/lattice-swap/web/driver/test/fakes.js';
 import { App } from '../src/app';
 import { btc } from '../src/format';
-import { call, confirm, deposit, driverOf, posted, POLICY, world, type World } from './world';
+import { call, confirm, deposit, driverOf, posted, POLICY, signedOffer, world, type World } from './world';
+import { listOffers } from '../src/offers';
 
 const WAIT = { timeout: 20_000 };
 
@@ -108,7 +109,8 @@ describe('a swap through the page', () => {
     // Taken from the Wallet tab while funding: it holds the wallet key alone.
     tab(/^Wallet/);
     click('Download recovery file');
-    tab(/^Swap · running$/);
+    // Not yet running: the offer is not taken.
+    tab(/^Swap · waiting for funds$/);
     deposit(w, address, 1_100_000);
     await until(() => posted(w).length === 1, 20_000);
     await screen.findByText('Lock your BTC', {}, WAIT);
@@ -193,6 +195,54 @@ describe('a swap through the page', () => {
     expect(screen.queryByText(/store busy/)).toBeNull();
   });
 
+  test('a retry pending when the buyer starts a swap leaves that swap alone', async () => {
+    const w = await world({ extra: { poll: 1500 } });
+    await Wallet.open(driverOf(w));
+    const keys = w.store.keys.bind(w.store);
+    let fail = 1;
+    w.store.keys = async () => {
+      if (fail-- > 0) throw new Error('store busy');
+      return keys();
+    };
+    const resume = vi.spyOn(Buyer, 'resume');
+    try {
+      render(<App config={w.config} />);
+      await screen.findByText(/Could not resume your swap, trying again: store busy/, {}, WAIT);
+      fireEvent.input(screen.getByLabelText('You pay'), { target: { value: '0.01' } });
+      fireEvent.input(screen.getByLabelText('Send NEX to'), { target: { value: w.nexAddress } });
+      await screen.findByText(/best of 1/, {}, WAIT);
+      click('Swap');
+      await screen.findByRole('heading', { name: 'Review swap' }, WAIT);
+      click('Start swap');
+      await screen.findByRole('heading', { name: 'Fund your wallet' }, WAIT);
+      // Past the retry's time: it neither resumes the swap a second time nor
+      // says it failed.
+      await new Promise((r) => setTimeout(r, 2500));
+      expect(resume).not.toHaveBeenCalled();
+      expect(screen.getByRole('heading', { name: 'Fund your wallet' })).toBeTruthy();
+    } finally {
+      resume.mockRestore();
+    }
+  });
+
+  test('offers at a price of 0 or with amounts beyond 2^53 are left out', async () => {
+    const w = await world();
+    const zero = signedOffer(w.offer, '{"price":0,"min_btc_amount":10000,"max_btc_amount":1000000}');
+    const huge = signedOffer(w.offer, '{"price":1,"min_btc_amount":10000,"max_btc_amount":18014398509481984}');
+    // Both are offers their seller signed: only the page's rule leaves them
+    // out. 2^54 survives JSON in JavaScript exactly, so its signature holds,
+    // but is no safe integer.
+    expect(call('decodeOffer', zero).quote.price).toBe(0);
+    expect(call('decodeOffer', huge).quote.price).toBe(1);
+    w.listed.unshift(zero, huge);
+    expect((await listOffers(w.config.relay!, 'regtest', 'genesis')).map((l) => l.text)).toEqual([w.offer]);
+    render(<App config={w.config} />);
+    await screen.findByText(/best of 1/, {}, WAIT);
+    expect(screen.getByText(/1 NEX = 0\.02000000 BTC/)).toBeTruthy();
+    fireEvent.input(screen.getByLabelText('You pay'), { target: { value: '0.01' } });
+    expect(screen.getByTestId('quote').textContent).toBe('0.5');
+  });
+
   test('withdraws the whole balance when no swap runs', async () => {
     const w = await world();
     const wallet = await Wallet.open(driverOf(w));
@@ -250,7 +300,7 @@ describe('restore', () => {
     return store;
   }
 
-  test('after a restore the page follows the swap the file runs', async () => {
+  test('after a restore the page follows the swap the file runs, and only it', async () => {
     const w = await world();
     const { file } = await funded(w);
     const id = JSON.parse(w.offer).template.swap_id;
@@ -258,11 +308,26 @@ describe('restore', () => {
     // Nothing left to fund another swap: the page's own stays unfunded.
     w.chain.utxos.clear();
     const store = await beside(w, record, { taken: false });
-    render(<App config={{ ...w.config, driver: { ...w.config.driver, store } }} />);
-    await screen.findByRole('heading', { name: 'Fund your wallet' }, WAIT);
-    tab(/^Settings/);
-    upload(file);
-    await screen.findByText('Lock your BTC', {}, WAIT);
+    const resume = vi.spyOn(Buyer, 'resume');
+    try {
+      render(<App config={{ ...w.config, driver: { ...w.config.driver, store } }} />);
+      await screen.findByRole('heading', { name: 'Fund your wallet' }, WAIT);
+      tab(/^Settings/);
+      upload(file);
+      await screen.findByText('Lock your BTC', {}, WAIT);
+      // The swap left behind: a status it sends now is not shown.
+      const left = (await resume.mock.results[0].value) as Buyer;
+      expect(left.swapId).toBe('ff'.repeat(32));
+      // Checked as soon as it renders: the followed swap's next status would
+      // cover it.
+      await act(() => {
+        left.dispatchEvent(new CustomEvent('status', { detail: left.status() }));
+      });
+      expect(screen.queryByRole('heading', { name: 'Fund your wallet' })).toBeNull();
+      expect(screen.getByText('Lock your BTC')).toBeTruthy();
+    } finally {
+      resume.mockRestore();
+    }
   });
 
   test('a restore whose swap would run beside the page’s says so plainly', async () => {

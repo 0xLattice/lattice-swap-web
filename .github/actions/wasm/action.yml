@@ -2,13 +2,14 @@ name: Build the driver's wasm
 description: >-
   swap-wasm from the pinned vendor/lattice-swap, built into its
   web/driver/pkg by its own build.sh, with the toolchain lattice-swap's CI
-  uses: the Rust its rust-toolchain.toml pins, clang with the WebAssembly
-  target for secp256k1-sys, and the wasm-bindgen-cli its Cargo.lock pins.
+  uses: the Rust its rust-toolchain.toml pins, clang 18 by version (as
+  Bitcoin Core pins its compilers) for secp256k1-sys's WebAssembly C, and
+  the wasm-bindgen-cli its Cargo.lock pins.
 runs:
   using: composite
   steps:
     - shell: bash
-      run: sudo apt-get update -qq && sudo apt-get install -y -qq clang llvm
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq clang-18 llvm-18
     # The toolchain, components and wasm32 target rust-toolchain.toml names,
     # which build.sh's cargo then runs under.
     - shell: bash
@@ -18,6 +19,6 @@ runs:
       run: cargo install wasm-bindgen-cli --version 0.2.130 --locked
     - shell: bash
       env:
-        CC_wasm32_unknown_unknown: clang
-        AR_wasm32_unknown_unknown: llvm-ar
+        CC_wasm32_unknown_unknown: clang-18
+        AR_wasm32_unknown_unknown: llvm-ar-18
       run: vendor/lattice-swap/web/driver/build.sh

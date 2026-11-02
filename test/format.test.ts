@@ -16,6 +16,8 @@ test('amounts', () => {
   expect(parseBtc('abc')).toBeNull();
   // Rounded down, as the driver buys: the last satoshi buys nothing.
   expect(nexFor(500_001, 2_000_000)).toBe(250_000n);
+  // At a price of 0, nothing, as `Quote::nex_amount` gives.
+  expect(nexFor(500_000, 0)).toBe(0n);
 });
 
 test('durations', () => {

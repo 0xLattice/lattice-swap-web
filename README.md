@@ -60,8 +60,9 @@ page would open the mainnet wallet and its swaps, and an open tab of one
 network would hold the other off as "open in another tab". Nor is a path a
 security boundary: any page on the origin can read the other's wallet key.
 
-- Mainnet: `https://swap.lattice.build`, this repository's Pages site.
-  `public/CNAME` names it, and only the mainnet build carries it.
+- Mainnet: meant for `https://swap.lattice.build`, this repository's Pages
+  site, once the steps under [Deploy and release](#deploy-and-release) are
+  done. Until then nothing is published.
 - Signet: not deployed from here, since a repository has one Pages site. To
   host it, serve `dist-signet/` (or the release's `-signet.tar.gz`) from
   its own origin, such as `https://swap-signet.lattice.build`.
@@ -94,10 +95,31 @@ To move to a newer driver, check out another lattice-swap commit in
 ## Deploy and release
 
 CI builds the wasm, then runs the lint, typecheck, tests and both builds.
-Each push to main deploys the mainnet build to GitHub Pages, at
-`swap.lattice.build`: a `CNAME` record for it pointing at
-`0xlattice.github.io`, and the domain verified for the 0xLattice
-organization.
+A push to main deploys the mainnet build to GitHub Pages only once the
+repository variable `PAGES_CNAME` is `swap.lattice.build`. Until then the
+deploy job is skipped, so nothing is published at the default
+`0xlattice.github.io/lattice-swap-web/` address, an origin shared with
+every other Pages site of the organization.
+
+To set up the domain, in order:
+
+1. Verify `lattice.build` for the 0xLattice organization: Organization
+   settings → Pages → Add a domain. Then add the TXT record it shows,
+   `_github-pages-challenge-0xLattice.lattice.build`, and click Verify.
+2. Add a DNS `CNAME` record from `swap.lattice.build` to
+   `0xlattice.github.io`, unproxied.
+3. Set the Pages custom domain:
+   `gh api -X PUT repos/0xLattice/lattice-swap-web/pages -f cname=swap.lattice.build`.
+4. Set the repository variable:
+   `gh variable set PAGES_CNAME --body swap.lattice.build --repo 0xLattice/lattice-swap-web`.
+   The next push to main deploys.
+5. Wait for GitHub to issue the certificate. Then turn on Enforce HTTPS
+   (`gh api -X PUT repos/0xLattice/lattice-swap-web/pages -F https_enforced=true`)
+   before announcing the site.
+
+A deployment from Actions ignores a `CNAME` file: the domain is the Pages
+setting of step 3. `public/CNAME` only records it, in the mainnet build and
+its release tarball. It is harmless there.
 
 A `v*` tag matching `package.json`'s version makes a draft release. It
 holds `lattice-swap-web-<version>-mainnet.tar.gz` and `-signet.tar.gz`, each

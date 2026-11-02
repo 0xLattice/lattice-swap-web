@@ -14,6 +14,7 @@ import {
   serve,
   testOffer,
 } from '../vendor/lattice-swap/web/driver/test/fakes.js';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import type { AppConfig } from '../src/config';
 
 export { call, parseTx, POLICY };
@@ -88,4 +89,17 @@ export function confirm(w: World, hex: string, depth = 1) {
  * again while one is unconfirmed. */
 export function posted(w: World): string[] {
   return [...new Set<string>(w.a.posted)];
+}
+
+/** The test offer with its quote as `quote`, JSON text so an amount above
+ * 2^53 survives, signed by a seller of its own as `lattice-swap offer`
+ * signs one: the quote, template and network, tagged. */
+export function signedOffer(base: string, quote: string): string {
+  const offer = JSON.parse(base);
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const seller = Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url').toString('hex');
+  const signed = `["lattice-swap offer 2",${quote},${JSON.stringify(offer.template)},${JSON.stringify(offer.btc_network)}]`;
+  const signature = sign(null, Buffer.from(signed), privateKey).toString('hex');
+  const rest = JSON.stringify({ ...offer, quote: undefined, seller, signature }).slice(1);
+  return `{"quote":${quote},${rest}`;
 }

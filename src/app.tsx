@@ -69,7 +69,9 @@ export function App({ config }: { config: AppConfig }) {
     setBuyer(next);
     setStatus(statusOf(next));
     setRunEnded(false);
-    next.addEventListener('status', (event) => setStatus((event as CustomEvent<Status>).detail));
+    next.addEventListener('status', (event) => {
+      if (run.current === stop) setStatus((event as CustomEvent<Status>).detail);
+    });
     next
       .run(stop.signal)
       .catch((e: Error) => setError(e.message))
@@ -112,6 +114,8 @@ export function App({ config }: { config: AppConfig }) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let opened: Wallet | null = null;
     const attempt = async () => {
+      // A swap is followed already: one the buyer started, or restored.
+      if (run.current !== null) return;
       try {
         if (opened === null) {
           if (!(await Wallet.exists(driverConfig))) return;
@@ -120,7 +124,7 @@ export function App({ config }: { config: AppConfig }) {
         await resume(opened);
         if (!stopped) setError(null);
       } catch (e) {
-        if (stopped) return;
+        if (stopped || run.current !== null) return;
         setError(`Could not resume your swap, trying again: ${(e as Error).message}`);
         timer = setTimeout(attempt, poll);
       }
@@ -311,7 +315,7 @@ export function App({ config }: { config: AppConfig }) {
           {tab('settings', 'Settings')}
           {active && screen !== 'status' && (
             <button type="button" class="tab running" onClick={() => setScreen('status')}>
-              Swap · running
+              {status.running ? 'Swap · running' : 'Swap · waiting for funds'}
             </button>
           )}
         </div>

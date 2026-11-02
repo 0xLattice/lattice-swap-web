@@ -200,6 +200,7 @@ describe('fund', () => {
   test('the offer gone, the buyer sent to pick another', () => {
     const onPickAnother = vi.fn();
     render(<Fund status={status({ step: 'offer-gone', warning: 'the offer is gone: the session ended' })} onPickAnother={onPickAnother} />);
+    expect(screen.getByRole('heading').textContent).toBe('Offer gone');
     expect(screen.getByText('That offer is gone. Your funds are still in your wallet; pick another.')).toBeTruthy();
     expect(screen.queryByText('Needed')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Pick another offer' }));
