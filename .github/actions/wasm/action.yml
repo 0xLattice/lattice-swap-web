@@ -1,0 +1,20 @@
+name: Build the driver's wasm
+description: >-
+  swap-wasm from the pinned vendor/lattice-swap, built into its
+  web/driver/pkg by its own build.sh, with the toolchain lattice-swap's CI
+  uses: clang with the WebAssembly target for secp256k1-sys, and the
+  wasm-bindgen-cli its Cargo.lock pins.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq clang llvm
+    - shell: bash
+      run: rustup target add wasm32-unknown-unknown
+    - shell: bash
+      run: cargo install wasm-bindgen-cli --version 0.2.130 --locked
+    - shell: bash
+      env:
+        CC_wasm32_unknown_unknown: clang
+        AR_wasm32_unknown_unknown: llvm-ar
+      run: vendor/lattice-swap/web/driver/build.sh

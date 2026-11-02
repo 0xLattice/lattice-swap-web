@@ -19,6 +19,12 @@ export default defineConfig({
   build: { target: 'es2022' },
   test: {
     environment: 'jsdom',
+    include: ['test/**/*.test.{ts,tsx}'],
+    setupFiles: ['test/setup.ts'],
+    // The driver and its fakes as Node loads them, one module instance for
+    // the page and the fakes: transformed for jsdom, the fakes' `new URL(...,
+    // import.meta.url)` file reads would be rewritten to the page's origin.
+    server: { deps: { external: [/vendor\/lattice-swap\/web\/driver\//] } },
     testTimeout: 60_000,
   },
 });

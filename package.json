@@ -12,7 +12,7 @@
     "wasm": "vendor/lattice-swap/web/driver/build.sh",
     "dev": "vite",
     "build": "vite build",
-    "build:signet": "vite build --mode signet --outDir dist/signet",
+    "build:signet": "vite build --mode signet --outDir dist-signet",
     "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
