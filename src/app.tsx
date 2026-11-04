@@ -48,6 +48,7 @@ export function App({ config }: { config: AppConfig }) {
   const [nexAddress, setNexAddress] = useState('');
   const [backedUp, setBackedUp] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [evictable, setEvictable] = useState(false);
   const run = useRef<AbortController | null>(null);
 
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
@@ -106,6 +107,25 @@ export function App({ config }: { config: AppConfig }) {
   async function open(): Promise<Wallet> {
     const w = await Wallet.open(driverConfig);
     setWallet(w);
+    return w;
+  }
+
+  /** Asks the browser to keep the store once it holds something to lose:
+   * a wallet made or restored, or a swap prepared. Without persistent
+   * storage the browser may clear it under storage pressure. */
+  async function keep() {
+    try {
+      if (await navigator.storage.persisted()) return;
+      setEvictable(!(await navigator.storage.persist()));
+    } catch {
+      // A browser without the API, or one that would not answer: nothing
+      // to say.
+    }
+  }
+
+  async function made(): Promise<Wallet> {
+    const w = await open();
+    keep();
     return w;
   }
 
@@ -203,6 +223,7 @@ export function App({ config }: { config: AppConfig }) {
       policy: { ...config.bounds, btc_amount: btcAmount, price: offer.offer.quote.price },
       nexAddress: nexAddress.trim(),
     });
+    keep();
     await follow(prepared);
     setScreen('status');
   }
@@ -248,6 +269,7 @@ export function App({ config }: { config: AppConfig }) {
       throw e;
     }
     setWallet(w);
+    keep();
     const running = await w.running();
     if (running !== null ? running !== buyer?.swapId : !active) await resume(w);
   }
@@ -318,7 +340,7 @@ export function App({ config }: { config: AppConfig }) {
         wallet={wallet}
         balance={shownBalance}
         swapRuns={swapRuns}
-        onOpen={open}
+        onOpen={made}
         onBackup={backup}
       />
     );
@@ -347,6 +369,11 @@ export function App({ config }: { config: AppConfig }) {
         {error !== null && (
           <p role="alert" class="error">
             {bounded(error)}
+          </p>
+        )}
+        {evictable && (screen === 'wallet' || (screen === 'status' && status?.step === 'fund-wallet')) && (
+          <p role="status" class="small muted">
+            This browser may clear this wallet's data. Download the recovery file.
           </p>
         )}
         {body}
