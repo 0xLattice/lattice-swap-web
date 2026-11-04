@@ -49,8 +49,6 @@ export function App({ config }: { config: AppConfig }) {
   const [backedUp, setBackedUp] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [evictable, setEvictable] = useState(false);
-  /** The punished swap this page resumed, asking the seller for `s`. */
-  const [asked, setAsked] = useState<string | null>(null);
   const run = useRef<AbortController | null>(null);
 
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
@@ -103,13 +101,12 @@ export function App({ config }: { config: AppConfig }) {
       const resumed = await Buyer.resume(w, id);
       const resumedStatus = statusOf(resumed);
       if (!unfinished(resumedStatus)) continue;
-      // None running before, one running once resumed was punished: it
+      // One running once resumed, as a punished one asking the seller,
       // goes before one waiting for funds.
       if (running === null && !resumedStatus.running) {
         waiting ??= resumed;
         continue;
       }
-      if (running === null) setAsked(id);
       await follow(resumed);
       setScreen('status');
       return;
@@ -340,7 +337,6 @@ export function App({ config }: { config: AppConfig }) {
         <Progress
           status={status}
           backedUp={backedUp.has(status.swapId)}
-          asking={asked === status.swapId}
           save={save}
           onBackup={backup}
           onWithdraw={() => setScreen('wallet')}
@@ -384,7 +380,7 @@ export function App({ config }: { config: AppConfig }) {
           {tab('settings', 'Settings')}
           {active && screen !== 'status' && (
             <button type="button" class="tab running" onClick={() => setScreen('status')}>
-              {asked === status.swapId ? 'Swap · asking the seller' : status.running ? 'Swap · running' : 'Swap · waiting for funds'}
+              {status.step === 'asking' ? 'Swap · asking the seller' : status.running ? 'Swap · running' : 'Swap · waiting for funds'}
             </button>
           )}
         </div>

@@ -66,8 +66,6 @@ const ENDS: Record<string, string> = {
 export function Progress(props: {
   status: Status;
   backedUp: boolean;
-  /** A punished swap the page resumed, asking the seller for `s`. */
-  asking?: boolean;
   save: (name: string, text: string, type?: string) => void;
   onBackup: () => void;
   onWithdraw: () => void;
@@ -76,8 +74,7 @@ export function Progress(props: {
   const { status } = props;
   const at = stepOf(status);
   const { cancel } = status.deadlines;
-  const asking = props.asking === true && status.outcome === null;
-  const swapping = !asking && (status.step === 'swapping' || status.step === 'finishing');
+  const swapping = status.step === 'swapping' || status.step === 'finishing';
   // While the page must stay open, "come back by" would tell the buyer
   // they may close it.
   const comeBack = cancel && !status.mustStayOpen && `Come back by ${when(cancel.eta)} and keep this page open until your refund confirms.`;
@@ -101,7 +98,9 @@ export function Progress(props: {
           <span class="small">
             {status.step === 'refunding'
               ? 'Refunding your BTC. Leave this page open until it confirms.'
-              : 'Finishing your swap. Leave this page open until it settles.'}
+              : status.step === 'asking'
+                ? 'Asking the seller to release your NEX. Leave this page open until it settles.'
+                : 'Finishing your swap. Leave this page open until it settles.'}
           </span>
         </div>
       )}
@@ -142,7 +141,7 @@ export function Progress(props: {
         </div>
       )}
 
-      {asking && (
+      {status.step === 'asking' && (
         <div role="status" class="box strong-border">
           <span class="strong">Asking the seller to release your NEX…</span>
           {status.warning !== null && <span class="small muted">{bounded(status.warning)}</span>}
@@ -172,14 +171,14 @@ export function Progress(props: {
       {status.step === 'done' && status.outcome !== 'swapped' && (
         <div class="box strong-border">
           <span class="strong">{ENDS[status.outcome ?? ''] ?? `The swap ended: ${status.outcome}.`}</span>
-          {props.asking && status.outcome === 'punished' && (
+          {status.outcome === 'punished' && (
             <span class="small muted">The seller did not release your NEX. This page asks again each time it opens.</span>
           )}
           <div class="buttons">{swapAgain}</div>
         </div>
       )}
 
-      {at !== null && !asking && (
+      {at !== null && (
         <ol class="steps">
           {STEPS.map((title, i) => {
             const done = i < at || (i === 3 && at === 3);

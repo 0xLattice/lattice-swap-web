@@ -66,7 +66,7 @@ describe('progress', () => {
     expect(stepOf(status({ confirmations: { funding: 3, lockSpend: null, cancelSpend: null, nexLock: 0 } }))).toBe(1);
     expect(stepOf(status({ step: 'finishing' }))).toBe(2);
     expect(stepOf(status({ step: 'done', outcome: 'swapped' }))).toBe(3);
-    for (const s of [status({ step: 'refunding' }), status({ step: 'refunded', outcome: 'refunded' }), status({ step: 'done', outcome: 'aborted' })]) {
+    for (const s of [status({ step: 'asking' }), status({ step: 'refunding' }), status({ step: 'refunded', outcome: 'refunded' }), status({ step: 'done', outcome: 'aborted' })]) {
       expect(stepOf(s)).toBeNull();
     }
   });
@@ -151,6 +151,17 @@ describe('progress', () => {
     // Nothing says the page may close and be opened again later.
     expect(screen.queryByText(/come back by/i)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save reminder (.ics)' })).toBeNull();
+  });
+
+  test('asking says it asks the seller, without the four steps', () => {
+    progress(status({ step: 'asking', mustStayOpen: true, warning: 'seller: not met', deadlines: DEADLINES }));
+    expect(screen.getAllByRole('status').map((s) => s.textContent)).toEqual([
+      'Keep this page openAsking the seller to release your NEX. Leave this page open until it settles.',
+      'Asking the seller to release your NEX…seller: not met',
+    ]);
+    expect(document.querySelector('.steps')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(/come back by/i)).toBeNull();
   });
 
   test('stalled while the page must stay open: no "come back by"', () => {
