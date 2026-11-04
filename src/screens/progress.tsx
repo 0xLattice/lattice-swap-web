@@ -25,10 +25,7 @@ function detail(status: Status, at: number): string {
   if (at === 0) return funding === null ? 'Locking BTC from your wallet.' : 'Your lock is in the mempool, waiting for a block.';
   if (at === 1) {
     if (nexLock !== null) return `NEX lock: ${confirmations(nexLock, status.nex_confirmations, 'Nexus ')}.`;
-    // A failed round is the driver's warning, retried the next: the page
-    // must stay open for it.
-    const waiting = status.warning === null ? 'Nothing to do.' : 'Reconnecting… keep this page open.';
-    return `Your lock has ${confirmations(funding, status.btc_confirmations)}. Waiting for the seller to lock NEX on Nexus. ${waiting}`;
+    return `Your lock has ${confirmations(funding, status.btc_confirmations)}. Waiting for the seller to lock NEX on Nexus. Nothing to do.`;
   }
   if (at === 2) return 'Your browser completes the swap with the seller.';
   return `${nex(status.nex_amount)} NEX is in your address.`;

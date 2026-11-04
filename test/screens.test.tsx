@@ -93,12 +93,14 @@ describe('progress', () => {
     expect(current()).toMatch(/NEX lock: 2 of 2 Nexus confirmations\.$/);
   });
 
-  test('while the driver retries, the seller’s step says to keep the page open, not that nothing is to do', () => {
+  test('a warning shows in the stalled box, and the seller’s step still says what is waited on', () => {
+    // A warning is any failed round, a backend's as much as the session's:
+    // the step does not guess which.
     progress(
-      status({ confirmations: { funding: 3, lockSpend: null, cancelSpend: null, nexLock: null }, warning: 'session ended: closed' }),
+      status({ confirmations: { funding: 3, lockSpend: null, cancelSpend: null, nexLock: null }, warning: 'esplora: 503' }),
     );
-    expect(current()).toMatch(/Waiting for the seller to lock NEX on Nexus\. Reconnecting… keep this page open\.$/);
-    expect(current()).not.toMatch(/Nothing to do/);
+    expect(screen.getByRole('alert').textContent).toMatch(/The swap is stalled.*esplora: 503/);
+    expect(current()).toMatch(/Waiting for the seller to lock NEX on Nexus\. Nothing to do\.$/);
   });
 
   test('the lock’s depth is shown of the depth the swap asks for', () => {
