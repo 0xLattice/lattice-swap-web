@@ -2,7 +2,7 @@
 // `Buyer#status()` in driver.js, and an offer as swap-wasm's `decodeOffer`
 // reads one from a relay's board.
 
-export type Step = 'fund-wallet' | 'swapping' | 'finishing' | 'done' | 'refunding' | 'refunded' | 'offer-gone' | 'cancelled';
+export type Step = 'fund-wallet' | 'swapping' | 'finishing' | 'asking' | 'done' | 'refunding' | 'refunded' | 'offer-gone' | 'cancelled';
 export type Outcome = 'swapped' | 'refunded' | 'punished' | 'drained' | 'aborted';
 
 export interface Deadline {

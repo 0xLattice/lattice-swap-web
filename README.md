@@ -17,7 +17,7 @@ The page shows only what the driver exposes. Each screen follows
 - **Fund your wallet** (`step: fund-wallet`): the wallet's address, with
   `need`, `wallet.confirmed` and `wallet.unconfirmed`. If the offer is gone
   (`step: offer-gone`), it says so and you pick another.
-- **Progress** (`swapping`, `finishing`, `done`): the amounts and NEX
+- **Progress** (`swapping`, `finishing`, `asking`, `done`): the amounts and NEX
   address from `btc_amount`, `nex_amount` and `nexAddress`, and four steps
   from `confirmations`, each "n of" `btc_confirmations` or
   `nex_confirmations`. It asks for the recovery file once `backupCovers` is
