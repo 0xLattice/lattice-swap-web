@@ -541,6 +541,22 @@ describe('persistent storage', () => {
     }
   });
 
+  test('a page loaded over a wallet asks, and a refusal shows the notice', async () => {
+    const storage = apis(false, false);
+    stub(storage);
+    try {
+      const w = await world();
+      await Wallet.open(driverOf(w));
+      render(<App config={w.config} />);
+      await screen.findByText(/best of 1/, {}, WAIT);
+      await waitFor(() => expect(storage.persist).toHaveBeenCalled(), WAIT);
+      tab(/^Wallet/);
+      await screen.findByText(NOTICE, {}, WAIT);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   test('a browser without the API still makes a wallet and starts a swap', async () => {
     stub(undefined);
     try {

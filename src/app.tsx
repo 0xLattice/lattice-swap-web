@@ -146,6 +146,7 @@ export function App({ config }: { config: AppConfig }) {
         if (opened === null) {
           if (!(await Wallet.exists(driverConfig))) return;
           opened = await open();
+          keep();
         }
         await resume(opened);
         if (!stopped) setError(null);
