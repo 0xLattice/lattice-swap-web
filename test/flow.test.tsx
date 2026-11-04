@@ -482,3 +482,89 @@ test('a build with no relay says so', async () => {
   tab(/^Offers/);
   expect(screen.getByText('No relay configured')).toBeTruthy();
 });
+
+describe('persistent storage', () => {
+  const NOTICE = "This browser may clear this wallet's data. Download the recovery file.";
+  const stub = (storage: object | undefined) => vi.stubGlobal('navigator', { ...navigator, storage });
+  const apis = (persisted: boolean, granted: boolean) => ({
+    persisted: vi.fn(async () => persisted),
+    persist: vi.fn(async () => granted),
+  });
+
+  test('none asked on load; asked once a swap is prepared, and a refusal shows the notice', async () => {
+    const storage = apis(false, false);
+    stub(storage);
+    try {
+      const w = await world();
+      render(<App config={w.config} />);
+      await screen.findByText(/best of 1/, {}, WAIT);
+      expect(storage.persist).not.toHaveBeenCalled();
+      cleanup();
+      await startSwap(w);
+      expect(storage.persist).toHaveBeenCalled();
+      await screen.findByText(NOTICE, {}, WAIT);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('asked once a wallet is made; granted, no notice', async () => {
+    const storage = apis(false, true);
+    stub(storage);
+    try {
+      const w = await world();
+      render(<App config={w.config} />);
+      await screen.findByText(/best of 1/, {}, WAIT);
+      tab(/^Wallet/);
+      click('Make a wallet');
+      await screen.findByText('Withdraw everything to', {}, WAIT);
+      await waitFor(() => expect(storage.persist).toHaveBeenCalled(), WAIT);
+      await act(async () => {});
+      expect(screen.queryByText(NOTICE)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('already persisted: not asked again, no notice', async () => {
+    const storage = apis(true, false);
+    stub(storage);
+    try {
+      const w = await world();
+      await startSwap(w);
+      await waitFor(() => expect(storage.persisted).toHaveBeenCalled(), WAIT);
+      await act(async () => {});
+      expect(storage.persist).not.toHaveBeenCalled();
+      expect(screen.queryByText(NOTICE)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('a page loaded over a wallet asks, and a refusal shows the notice', async () => {
+    const storage = apis(false, false);
+    stub(storage);
+    try {
+      const w = await world();
+      await Wallet.open(driverOf(w));
+      render(<App config={w.config} />);
+      await screen.findByText(/best of 1/, {}, WAIT);
+      await waitFor(() => expect(storage.persist).toHaveBeenCalled(), WAIT);
+      tab(/^Wallet/);
+      await screen.findByText(NOTICE, {}, WAIT);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('a browser without the API still makes a wallet and starts a swap', async () => {
+    stub(undefined);
+    try {
+      const w = await world();
+      await startSwap(w);
+      expect(screen.queryByText(NOTICE)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
