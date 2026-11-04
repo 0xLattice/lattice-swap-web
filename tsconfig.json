@@ -14,9 +14,9 @@
     "isolatedModules": true,
     "types": ["vite/client", "node"],
     "paths": {
-      "lattice-swap-driver": ["./vendor/lattice-swap/web/driver/src/index.js"],
+      "lattice-swap-driver": ["./driver.ts"],
       "lattice-swap-driver/*": ["./vendor/lattice-swap/web/driver/src/*"]
     }
   },
-  "include": ["src", "test", "vite.config.ts"]
+  "include": ["src", "test", "vite.config.ts", "driver.ts"]
 }

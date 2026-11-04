@@ -15,6 +15,12 @@ export interface AppConfig {
   /** Anything else the driver's `Wallet.open` takes: its store, locks,
    * poll, a session opener in tests. */
   driver?: Record<string, unknown>;
+  /** Hands the buyer the file `name`, for a host embedding the page; a
+   * download if unset. */
+  save?: (name: string, text: string) => void | Promise<void>;
+  /** The host runs the Nexus node the page reads: shown as "your node",
+   * with no URL to set. */
+  ownNode?: boolean;
 }
 
 export type Setting = 'esplora' | 'nexus';

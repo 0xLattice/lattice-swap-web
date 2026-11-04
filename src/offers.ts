@@ -1,5 +1,4 @@
-import { offers } from 'lattice-swap-driver';
-import { call, safe } from 'lattice-swap-driver/wasm.js';
+import { decodeOffer, offers, safe } from 'lattice-swap-driver';
 import type { Listed, Offer } from './types';
 
 /** The offers `relay` lists for `network` and the Nexus of `genesis`,
@@ -11,7 +10,7 @@ export async function listOffers(relay: string, network: string, genesis: string
   for (const text of await offers(relay)) {
     let offer: Offer;
     try {
-      offer = call('decodeOffer', text);
+      offer = decodeOffer(text);
     } catch {
       continue;
     }

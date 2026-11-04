@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import { wasm } from 'lattice-swap-driver/wasm.js';
+import { isCid } from 'lattice-swap-driver';
 import type { OffersState } from '../app';
 import { bounded, btc, nex, nexFor, parseBtc, refundAfter } from '../format';
 import type { Balance, Listed } from '../types';
@@ -36,7 +36,7 @@ export function SwapForm(props: {
   const quote = offer?.offer.quote;
   const inRange = sats !== null && quote !== undefined && sats >= quote.min_btc_amount && sats <= quote.max_btc_amount;
   const address = nexAddress.trim();
-  const validAddress = address !== '' && wasm.isCid(address);
+  const validAddress = address !== '' && isCid(address);
   return (
     <section class="narrow">
       {props.relay === null && <NoRelay />}

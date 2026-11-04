@@ -89,6 +89,26 @@ describe('a swap through the page', () => {
     await waitFor(() => expect((screen.getByRole('button', { name: 'Withdraw' }) as HTMLButtonElement).disabled).toBe(false), WAIT);
   });
 
+  test('a host’s save takes the recovery file and the reminder, and nothing downloads', async () => {
+    const w = await world();
+    const save = vi.fn();
+    w.config.save = save;
+    vi.mocked(URL.createObjectURL).mockClear();
+    const address = await startSwap(w);
+    deposit(w, address, 1_100_000);
+    await until(() => posted(w).length === 1, 20_000);
+    fireEvent.click(await screen.findByRole('button', { name: 'Download recovery file' }, WAIT));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1), WAIT);
+    expect(save.mock.calls[0][0]).toMatch(/\.json$/);
+    expect(JSON.parse(save.mock.calls[0][1]).wallet).toBeTruthy();
+    confirm(w, posted(w)[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Save reminder (.ics)' }, WAIT));
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1][0]).toMatch(/^lattice-swap-.+\.ics$/);
+    expect(save.mock.calls[1][1]).toMatch(/^BEGIN:VCALENDAR/);
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
   test('an offer whose seller is gone says so, and the buyer picks another', async () => {
     const w = await world();
     w.seller.open = async () => {
@@ -565,6 +585,103 @@ describe('persistent storage', () => {
       expect(screen.queryByText(NOTICE)).toBeNull();
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('a punished swap', () => {
+  /** What the seller broadcasts on `event`. */
+  function sellerSees(w: World, event: unknown): string[] {
+    const { actions } = call('stepSeller', w.seller.state(), JSON.stringify(event));
+    w.seller.step(event);
+    return actions.filter((action: { Broadcast?: string }) => action.Broadcast).map((action: { Broadcast: string }) => action.Broadcast);
+  }
+
+  /** A swap the seller punished, as the driver's own test plays it: the
+   * buyer's page closed once its lock was out, the seller locked NEX,
+   * cancelled at t1 and punished t2 later, and the buyer, back to the
+   * punish deep, met no seller and ended punished. A copy of the swap as
+   * prepared, untaken, waits ahead of it in the store, as swap 00…00. The
+   * seller has not seen its punish deep, and is nowhere to be met. */
+  async function punished(w: World) {
+    const { t1, t2 } = JSON.parse(w.offer).template;
+    const wallet = await Wallet.open(driverOf(w));
+    const buyer = await Buyer.prepare(wallet, { offer: w.offer, policy: POLICY, nexAddress: w.nexAddress });
+    const key = `swap:${buyer.swapId}`;
+    const prepared = await w.store.get(key);
+    deposit(w, wallet.address, 1_100_000);
+    const stop = new AbortController();
+    const done = buyer.run(stop.signal);
+    await until(() => posted(w).length === 1, 20_000);
+    stop.abort();
+    await done;
+
+    confirm(w, posted(w)[0]);
+    w.seller.step({ Bitcoin: { height: w.chain.height, funding: 1, lock_spend: null, cancel_spend: null, stale: null } });
+    const health = { phase: 'active', height: 10, best_header_height: 10, tip: 'tip' };
+    const nexus = (watched: unknown) => ({
+      Nexus: { health, own: { balance: 10_000_000, nonce: 3 }, lock: { balance: 0, nonce: 0 }, min_relay_fee: 0, watched, block_at: null },
+    });
+    w.seller.step(nexus(null));
+    const { body } = JSON.parse(w.seller.state()).LockingNex.nex_lock;
+    w.seller.step(nexus([{ body, block: { height: 10, hash: 'tip' } }, 1]));
+    const lockHeight = w.chain.height;
+    const bitcoin = (lockSpend: unknown, cancelSpend: unknown) => ({
+      Bitcoin: { height: w.chain.height, funding: w.chain.height - lockHeight + 1, lock_spend: lockSpend, cancel_spend: cancelSpend, stale: null },
+    });
+    w.chain.mine(t1 - 1);
+    const [cancel] = sellerSees(w, bitcoin(null, null));
+    confirm(w, cancel);
+    w.chain.mine(t2 - 1);
+    const [punish] = sellerSees(w, bitcoin({ tx: cancel, confirmations: t2 }, null));
+    confirm(w, punish);
+    expect(await (await Buyer.resume(wallet, buyer.swapId)).run()).toBe('punished');
+
+    const record = await w.store.get(key);
+    await w.store.delete(key);
+    const other = '00'.repeat(32);
+    await w.store.put(`swap:${other}`, { ...prepared, swap_id: other });
+    await w.store.put(key, record);
+    expect(await w.store.keys()).toEqual(['wallet', `swap:${other}`, key]);
+    /** The seller sees its punish deep: punished in its own eyes, it waits
+     * at its rendezvous to give `s`. */
+    const sellerPunished = () => sellerSees(w, bitcoin({ tx: cancel, confirmations: t2 + 1 }, { tx: punish, confirmations: 1 }));
+    return { key, sellerPunished };
+  }
+
+  const asks = (w: World) => w.seller.log.filter((message: unknown) => message === 'ShareRequest').length;
+  const ASKING = 'Asking the seller to release your NEX…';
+
+  test('a load asks the seller for s once, and claims the NEX with it', async () => {
+    const w = await world({ extra: { messageTimeout: 300 } });
+    const { key, sellerPunished } = await punished(w);
+    sellerPunished();
+    render(<App config={w.config} />);
+    await screen.findByText(ASKING, {}, WAIT);
+    // Not the swap waiting for funds ahead of it, and not shown as running.
+    expect(screen.queryByRole('heading', { name: 'Fund your wallet' })).toBeNull();
+    tab(/^Wallet/);
+    expect(within(screen.getByRole('banner')).getByRole('button', { name: /^Swap · / }).textContent).toBe('Swap · asking the seller');
+    await until(async () => Object.keys(JSON.parse((await w.store.get(key)).state))[0] === 'ClaimingNex', 20_000);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(asks(w)).toBe(1);
+  });
+
+  test('a seller not met leaves it punished, said so, and the page asks no more this load', async () => {
+    const w = await world({ extra: { messageTimeout: 300 } });
+    const { key } = await punished(w);
+    const resume = vi.spyOn(Buyer, 'resume');
+    try {
+      render(<App config={w.config} />);
+      await screen.findByText(ASKING, {}, WAIT);
+      await screen.findByText('The seller did not release your NEX. This page asks again each time it opens.', {}, WAIT);
+      expect(screen.queryByText(ASKING)).toBeNull();
+      expect(within(screen.getByRole('banner')).queryByRole('button', { name: /^Swap · / })).toBeNull();
+      await new Promise((r) => setTimeout(r, 500));
+      expect(resume.mock.calls.filter(([, id]) => `swap:${id}` === key)).toHaveLength(1);
+      expect(Object.keys(JSON.parse((await w.store.get(key)).state))[0]).toBe('Punished');
+    } finally {
+      resume.mockRestore();
     }
   });
 });

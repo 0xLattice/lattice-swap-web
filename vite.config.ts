@@ -2,8 +2,10 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import preact from '@preact/preset-vite';
 
-// The driver, from the lattice-swap submodule pinned in vendor/.
+// The driver, from the lattice-swap submodule pinned in vendor/, as the
+// page imports it (driver.ts).
 const driver = fileURLToPath(new URL('./vendor/lattice-swap/web/driver/src/', import.meta.url));
+const page = fileURLToPath(new URL('./driver.ts', import.meta.url));
 
 /** The built page's Content-Security-Policy: its own scripts and the
  * wasm compiled from them, and requests to any https or wss server, since
@@ -37,7 +39,7 @@ export default defineConfig(({ mode }) => ({
   ],
   resolve: {
     alias: [
-      { find: /^lattice-swap-driver$/, replacement: `${driver}index.js` },
+      { find: /^lattice-swap-driver$/, replacement: page },
       { find: /^lattice-swap-driver\/(.*)$/, replacement: `${driver}$1` },
     ],
   },

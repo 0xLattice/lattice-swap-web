@@ -5,9 +5,12 @@ import { fireEvent, render, screen } from '@testing-library/preact';
 import { unfinished } from '../src/app';
 import { Fund } from '../src/screens/fund';
 import { Progress, stepOf } from '../src/screens/progress';
+import { download } from '../src/download';
 import { WalletScreen } from '../src/screens/wallet';
 import { Offers } from '../src/screens/offers';
 import { SwapForm } from '../src/screens/swap';
+import { Settings } from '../src/screens/settings';
+import type { AppConfig } from '../src/config';
 import type { Status } from '../src/types';
 
 const HOUR = 3_600_000;
@@ -47,6 +50,7 @@ const progress = (s: Status, backedUp = false) =>
     <Progress
       status={s}
       backedUp={backedUp}
+      save={download}
       onBackup={vi.fn()}
       onWithdraw={vi.fn()}
       onSwapAgain={vi.fn()}
@@ -119,7 +123,7 @@ describe('progress', () => {
   test('the recovery file is asked for once it covers the lock, until downloaded', () => {
     const onBackup = vi.fn();
     render(
-      <Progress status={status({ backupCovers: 'lock' })} backedUp={false} onBackup={onBackup} onWithdraw={vi.fn()} onSwapAgain={vi.fn()} />,
+      <Progress status={status({ backupCovers: 'lock' })} backedUp={false} save={vi.fn()} onBackup={onBackup} onWithdraw={vi.fn()} onSwapAgain={vi.fn()} />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Download recovery file' }));
     expect(onBackup).toHaveBeenCalled();
@@ -181,7 +185,7 @@ describe('progress', () => {
   test('refunded offers a withdrawal and another swap', () => {
     const onWithdraw = vi.fn();
     render(
-      <Progress status={status({ step: 'refunded', outcome: 'refunded' })} backedUp={false} onBackup={vi.fn()} onWithdraw={onWithdraw} onSwapAgain={vi.fn()} />,
+      <Progress status={status({ step: 'refunded', outcome: 'refunded' })} backedUp={false} save={vi.fn()} onBackup={vi.fn()} onWithdraw={onWithdraw} onSwapAgain={vi.fn()} />,
     );
     expect(screen.getByText('Refunded. Your BTC is back in your wallet.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Withdraw' }));
@@ -358,5 +362,23 @@ describe('swap', () => {
     expect(screen.queryByText('No offers on the relay right now.')).toBeNull();
     expect((screen.getByRole('button', { name: 'Swap' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole('button', { name: 'Pick another offer' })).toBeTruthy();
+  });
+});
+
+describe('settings', () => {
+  const config: AppConfig = { network: 'regtest', esplora: 'https://esplora.example', nexus: 'https://nexus.example', relay: null };
+
+  test('the Nexus read URL can be set', () => {
+    render(<Settings config={config} onRestore={vi.fn()} />);
+    expect((screen.getByLabelText('Nexus read URL') as HTMLInputElement).value).toBe('https://nexus.example');
+    expect(screen.queryByText('Your node')).toBeNull();
+  });
+
+  test('a host running its own node: Nexus is "your node", with no URL to set', () => {
+    render(<Settings config={{ ...config, ownNode: true }} onRestore={vi.fn()} />);
+    expect(screen.queryByLabelText('Nexus read URL')).toBeNull();
+    expect(screen.queryByText('https://nexus.example')).toBeNull();
+    expect(screen.getByText('Your node').previousSibling?.textContent).toBe('Nexus');
+    expect(screen.getByLabelText('Bitcoin backend (Esplora)')).toBeTruthy();
   });
 });

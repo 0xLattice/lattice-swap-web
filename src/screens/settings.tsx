@@ -30,12 +30,19 @@ export function Settings({ config, onRestore }: { config: AppConfig; onRestore: 
         </label>
         <input id="esplora" class="text" value={esplora} onInput={(e) => setEsplora(e.currentTarget.value)} />
       </div>
-      <div class="field">
-        <label for="nexus" class="label">
-          Nexus read URL
-        </label>
-        <input id="nexus" class="text" value={nexus} onInput={(e) => setNexus(e.currentTarget.value)} />
-      </div>
+      {config.ownNode ? (
+        <div class="field">
+          <span class="label">Nexus</span>
+          <span>Your node</span>
+        </div>
+      ) : (
+        <div class="field">
+          <label for="nexus" class="label">
+            Nexus read URL
+          </label>
+          <input id="nexus" class="text" value={nexus} onInput={(e) => setNexus(e.currentTarget.value)} />
+        </div>
+      )}
       <span class="small muted">
         These servers are trusted to report the chains honestly. Use your own for the strongest guarantees.
       </span>
