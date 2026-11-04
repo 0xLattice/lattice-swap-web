@@ -189,6 +189,29 @@ describe('a swap through the page', () => {
     await screen.findByText('Lock your BTC', {}, WAIT);
   });
 
+  test('a reload resumes the running swap with one run, through every re-render', async () => {
+    const w = await world();
+    const address = await startSwap(w);
+    deposit(w, address, 1_100_000);
+    await until(() => posted(w).length === 1, 20_000);
+    await screen.findByText('Lock your BTC', {}, WAIT);
+    // Reloaded: the swap is resumed, and its statuses re-render the page.
+    cleanup();
+    const run = vi.spyOn(Buyer.prototype, 'run');
+    try {
+      render(<App config={w.config} />);
+      await screen.findByText('Lock your BTC', {}, WAIT);
+      confirm(w, posted(w)[0]);
+      const current = () => document.querySelector('li[aria-current="step"]')?.textContent ?? '';
+      await waitFor(() => expect(current()).toMatch(/Seller locks NEX/), WAIT);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText(/running already/)).toBeNull();
+    } finally {
+      run.mockRestore();
+    }
+  });
+
   test('a seller that goes quiet before the lock ends the swap, nothing at stake', async () => {
     const clock = { offset: 0 };
     const w = await world({ extra: { now: () => Date.now() + clock.offset } });

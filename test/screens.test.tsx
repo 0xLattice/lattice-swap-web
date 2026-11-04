@@ -77,9 +77,30 @@ describe('progress', () => {
     expect(screen.queryByText(/If the swap stalls/)).toBeNull();
   });
 
-  test('the seller’s step shows the NEX lock once seen', () => {
-    progress(status({ confirmations: { funding: 2, lockSpend: null, cancelSpend: null, nexLock: 1 } }));
-    expect(current()).toMatch(/Seller locks NEX.*NEX lock is seen, 1 of 2 confirmations\./);
+  test('the seller’s step shows the NEX lock once seen, of its Nexus confirmations', () => {
+    // The BTC lock is past its target: what is waited on is the NEX lock.
+    progress(status({ confirmations: { funding: 167, lockSpend: null, cancelSpend: null, nexLock: 1 } }));
+    expect(current()).toMatch(/^2Seller locks NEXNEX lock: 1 of 2 Nexus confirmations\.$/);
+  });
+
+  test('before the NEX lock, the BTC lock’s confirmations stop at their target', () => {
+    progress(status({ confirmations: { funding: 167, lockSpend: null, cancelSpend: null, nexLock: null } }));
+    expect(current()).toMatch(/Your lock has 3 of 3 confirmations\. Waiting for the seller to lock NEX on Nexus\. Nothing to do\.$/);
+  });
+
+  test('a NEX lock past its target shows its target', () => {
+    progress(status({ confirmations: { funding: 3, lockSpend: null, cancelSpend: null, nexLock: 5 } }));
+    expect(current()).toMatch(/NEX lock: 2 of 2 Nexus confirmations\.$/);
+  });
+
+  test('a warning shows in the stalled box, and the seller’s step still says what is waited on', () => {
+    // A warning is any failed round, a backend's as much as the session's:
+    // the step does not guess which.
+    progress(
+      status({ confirmations: { funding: 3, lockSpend: null, cancelSpend: null, nexLock: null }, warning: 'esplora: 503' }),
+    );
+    expect(screen.getByRole('alert').textContent).toMatch(/The swap is stalled.*esplora: 503/);
+    expect(current()).toMatch(/Waiting for the seller to lock NEX on Nexus\. Nothing to do\.$/);
   });
 
   test('the lock’s depth is shown of the depth the swap asks for', () => {

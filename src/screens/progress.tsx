@@ -3,8 +3,10 @@ import { bounded, btc, nex, when } from '../format';
 import type { Status } from '../types';
 import { Row } from './ui';
 
-/** `n` of the `of` confirmations the swap asks for. */
-const confirmations = (n: number | null, of: number) => `${n ?? 0} of ${of} confirmation${of === 1 ? '' : 's'}`;
+/** `n` of the `of` confirmations the swap asks for: a lock deeper than
+ * that has all it needs, and the count stops there. */
+const confirmations = (n: number | null, of: number, chain = '') =>
+  `${Math.min(n ?? 0, of)} of ${of} ${chain}confirmation${of === 1 ? '' : 's'}`;
 
 const STEPS = ['Lock your BTC', 'Seller locks NEX', 'Finish', 'NEX received'];
 
@@ -22,7 +24,7 @@ function detail(status: Status, at: number): string {
   const { funding, nexLock } = status.confirmations;
   if (at === 0) return funding === null ? 'Locking BTC from your wallet.' : 'Your lock is in the mempool, waiting for a block.';
   if (at === 1) {
-    if (nexLock !== null) return `The seller’s NEX lock is seen, ${confirmations(nexLock, status.nex_confirmations)}.`;
+    if (nexLock !== null) return `NEX lock: ${confirmations(nexLock, status.nex_confirmations, 'Nexus ')}.`;
     return `Your lock has ${confirmations(funding, status.btc_confirmations)}. Waiting for the seller to lock NEX on Nexus. Nothing to do.`;
   }
   if (at === 2) return 'Your browser completes the swap with the seller.';
