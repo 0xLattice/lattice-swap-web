@@ -49,6 +49,8 @@ export function App({ config }: { config: AppConfig }) {
   const [backedUp, setBackedUp] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [evictable, setEvictable] = useState(false);
+  /** The punished swap this page resumed, asking the seller for `s`. */
+  const [asked, setAsked] = useState<string | null>(null);
   const run = useRef<AbortController | null>(null);
 
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
@@ -90,17 +92,31 @@ export function App({ config }: { config: AppConfig }) {
   }
 
   /** The swap the store holds that has not ended, carried on: the one
-   * running if any, else one prepared and waiting for funds. */
+   * running if any; else one punished, which its resume has ask the
+   * seller for `s` once more and claim the NEX with it; else one prepared
+   * and waiting for funds. */
   async function resume(w: Wallet) {
     const running = await w.running();
     const ids = running !== null ? [running] : await w.swaps();
+    let waiting: Buyer | null = null;
     for (const id of ids) {
       const resumed = await Buyer.resume(w, id);
-      if (unfinished(statusOf(resumed))) {
-        await follow(resumed);
-        setScreen('status');
-        return;
+      const resumedStatus = statusOf(resumed);
+      if (!unfinished(resumedStatus)) continue;
+      // None running before, one running once resumed was punished: it
+      // goes before one waiting for funds.
+      if (running === null && !resumedStatus.running) {
+        waiting ??= resumed;
+        continue;
       }
+      if (running === null) setAsked(id);
+      await follow(resumed);
+      setScreen('status');
+      return;
+    }
+    if (waiting !== null) {
+      await follow(waiting);
+      setScreen('status');
     }
   }
 
@@ -201,11 +217,16 @@ export function App({ config }: { config: AppConfig }) {
   const active = buyer !== null && status !== null && unfinished(status);
   const { offer, gone: pickGone } = offerFor(offers.list, chosen);
 
+  /** Hands the buyer `text` as the file `name`: through the host's
+   * `save`, if it gives one. */
+  const save = (name: string, text: string, type?: string) =>
+    config.save ? config.save(name, text) : download(name, text, type);
+
   async function backup() {
     if (wallet === null) return;
     try {
       const { name, file } = await wallet.backup();
-      download(name, file);
+      await save(name, file);
       // Only a file taken once it covers the lock answers the lock's prompt:
       // one taken before holds the wallet key and no more.
       if (status?.backupCovers === 'lock') setBackedUp(new Set(backedUp).add(status.swapId));
@@ -319,6 +340,8 @@ export function App({ config }: { config: AppConfig }) {
         <Progress
           status={status}
           backedUp={backedUp.has(status.swapId)}
+          asking={asked === status.swapId}
+          save={save}
           onBackup={backup}
           onWithdraw={() => setScreen('wallet')}
           onSwapAgain={() => clear('swap')}
@@ -349,7 +372,7 @@ export function App({ config }: { config: AppConfig }) {
   else body = null;
 
   return (
-    <div class="page">
+    <div class="lattice-swap">
       <header>
         <div class="brand">Lattice Swap</div>
         <nav aria-label="Main">
@@ -361,7 +384,7 @@ export function App({ config }: { config: AppConfig }) {
           {tab('settings', 'Settings')}
           {active && screen !== 'status' && (
             <button type="button" class="tab running" onClick={() => setScreen('status')}>
-              {status.running ? 'Swap · running' : 'Swap · waiting for funds'}
+              {asked === status.swapId ? 'Swap · asking the seller' : status.running ? 'Swap · running' : 'Swap · waiting for funds'}
             </button>
           )}
         </div>

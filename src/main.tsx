@@ -4,6 +4,7 @@ import { App } from './app';
 import { buildConfig } from './config';
 import { bounded } from './format';
 import './style.css';
+import './page.css';
 
 const root = document.getElementById('app')!;
 load().then(

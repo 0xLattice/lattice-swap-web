@@ -1,0 +1,7 @@
+/* The page on its own, not embedded in a host's: the screens fill it. */
+body {
+  margin: 0;
+}
+.lattice-swap {
+  min-height: 100vh;
+}

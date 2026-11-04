@@ -1,4 +1,4 @@
-import { download, reminder } from '../download';
+import { reminder } from '../download';
 import { bounded, btc, nex, when } from '../format';
 import type { Status } from '../types';
 import { Row } from './ui';
@@ -66,6 +66,9 @@ const ENDS: Record<string, string> = {
 export function Progress(props: {
   status: Status;
   backedUp: boolean;
+  /** A punished swap the page resumed, asking the seller for `s`. */
+  asking?: boolean;
+  save: (name: string, text: string, type?: string) => void;
   onBackup: () => void;
   onWithdraw: () => void;
   onSwapAgain: () => void;
@@ -73,13 +76,14 @@ export function Progress(props: {
   const { status } = props;
   const at = stepOf(status);
   const { cancel } = status.deadlines;
-  const swapping = status.step === 'swapping' || status.step === 'finishing';
+  const asking = props.asking === true && status.outcome === null;
+  const swapping = !asking && (status.step === 'swapping' || status.step === 'finishing');
   // While the page must stay open, "come back by" would tell the buyer
   // they may close it.
   const comeBack = cancel && !status.mustStayOpen && `Come back by ${when(cancel.eta)} and keep this page open until your refund confirms.`;
   const saveReminder = () =>
     cancel &&
-    download(
+    props.save(
       `lattice-swap-${status.swapId.slice(0, 8)}.ics`,
       reminder(status.swapId, cancel.eta, 'Lattice Swap: open the page for your refund', comeBack || ''),
       'text/calendar',
@@ -138,6 +142,13 @@ export function Progress(props: {
         </div>
       )}
 
+      {asking && (
+        <div role="status" class="box strong-border">
+          <span class="strong">Asking the seller to release your NEX…</span>
+          {status.warning !== null && <span class="small muted">{bounded(status.warning)}</span>}
+        </div>
+      )}
+
       {status.step === 'refunding' && (
         <div class="box strong-border">
           <span class="strong">Refunding your BTC</span>
@@ -161,11 +172,14 @@ export function Progress(props: {
       {status.step === 'done' && status.outcome !== 'swapped' && (
         <div class="box strong-border">
           <span class="strong">{ENDS[status.outcome ?? ''] ?? `The swap ended: ${status.outcome}.`}</span>
+          {props.asking && status.outcome === 'punished' && (
+            <span class="small muted">The seller did not release your NEX. This page asks again each time it opens.</span>
+          )}
           <div class="buttons">{swapAgain}</div>
         </div>
       )}
 
-      {at !== null && (
+      {at !== null && !asking && (
         <ol class="steps">
           {STEPS.map((title, i) => {
             const done = i < at || (i === 3 && at === 3);
