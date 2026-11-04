@@ -77,9 +77,28 @@ describe('progress', () => {
     expect(screen.queryByText(/If the swap stalls/)).toBeNull();
   });
 
-  test('the seller’s step shows the NEX lock once seen', () => {
-    progress(status({ confirmations: { funding: 2, lockSpend: null, cancelSpend: null, nexLock: 1 } }));
-    expect(current()).toMatch(/Seller locks NEX.*NEX lock is seen, 1 of 2 confirmations\./);
+  test('the seller’s step shows the NEX lock once seen, of its Nexus confirmations', () => {
+    // The BTC lock is past its target: what is waited on is the NEX lock.
+    progress(status({ confirmations: { funding: 167, lockSpend: null, cancelSpend: null, nexLock: 1 } }));
+    expect(current()).toMatch(/^2Seller locks NEXNEX lock: 1 of 2 Nexus confirmations\.$/);
+  });
+
+  test('before the NEX lock, the BTC lock’s confirmations stop at their target', () => {
+    progress(status({ confirmations: { funding: 167, lockSpend: null, cancelSpend: null, nexLock: null } }));
+    expect(current()).toMatch(/Your lock has 3 of 3 confirmations\. Waiting for the seller to lock NEX on Nexus\. Nothing to do\.$/);
+  });
+
+  test('a NEX lock past its target shows its target', () => {
+    progress(status({ confirmations: { funding: 3, lockSpend: null, cancelSpend: null, nexLock: 5 } }));
+    expect(current()).toMatch(/NEX lock: 2 of 2 Nexus confirmations\.$/);
+  });
+
+  test('while the driver retries, the seller’s step says to keep the page open, not that nothing is to do', () => {
+    progress(
+      status({ confirmations: { funding: 3, lockSpend: null, cancelSpend: null, nexLock: null }, warning: 'session ended: closed' }),
+    );
+    expect(current()).toMatch(/Waiting for the seller to lock NEX on Nexus\. Reconnecting… keep this page open\.$/);
+    expect(current()).not.toMatch(/Nothing to do/);
   });
 
   test('the lock’s depth is shown of the depth the swap asks for', () => {
