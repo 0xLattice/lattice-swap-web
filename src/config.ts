@@ -10,7 +10,8 @@ export interface AppConfig {
   /** The relay whose offers are listed; null if none is configured. */
   relay: string | null;
   /** Bounds on the offer's terms other than the CLI's defaults
-   * (`swap::offer::Bounds`); the driver's tests use looser ones. */
+   * (`swap::offer::Bounds`), from VITE_BOUNDS, JSON: the signet build
+   * takes shallow test terms; the driver's tests use looser ones. */
   bounds?: Record<string, number>;
   /** Anything else the driver's `Wallet.open` takes: its store, locks,
    * poll, a session opener in tests. */
@@ -54,5 +55,6 @@ export function buildConfig(): AppConfig {
     nexus: stored(network, 'nexus') ?? env.VITE_NEXUS,
     nexusGenesis: env.VITE_NEXUS_GENESIS || undefined,
     relay: env.VITE_RELAY || null,
+    bounds: env.VITE_BOUNDS ? JSON.parse(env.VITE_BOUNDS) : undefined,
   };
 }
