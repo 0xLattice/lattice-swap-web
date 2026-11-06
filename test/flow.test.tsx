@@ -638,9 +638,14 @@ describe('a punished swap', () => {
     w.chain.mine(t2 - 1);
     const [punish] = sellerSees(w, bitcoin({ tx: cancel, confirmations: t2 }, null));
     confirm(w, punish);
-    const resumed = (await Buyer.resume(wallet, buyer.swapId)).run();
-    await until(async () => Object.keys(JSON.parse((await w.store.get(key)).state))[0] === 'AskingShare', 20_000);
-    clock.offset += 61_000;
+    // Moved on until it ends: one move could land between the driver
+    // saving a state and restarting its timer, which then counts from it.
+    let outcome: string | null = null;
+    const resumed = (await Buyer.resume(wallet, buyer.swapId)).run().then((ended: string | null) => (outcome = ended ?? 'none'));
+    await until(() => {
+      clock.offset += 61_000;
+      return outcome !== null;
+    }, 20_000);
     expect(await resumed).toBe('punished');
 
     const record = await w.store.get(key);
@@ -687,8 +692,11 @@ describe('a punished swap', () => {
     try {
       render(<App config={w.config} />);
       await screen.findByText(ASKING, {}, WAIT);
-      clock.offset += 61_000;
-      await screen.findByText('The seller did not release your NEX. This page asks again each time it opens.', {}, WAIT);
+      const told = 'The seller did not release your NEX. This page asks again each time it opens.';
+      await until(() => {
+        clock.offset += 61_000;
+        return screen.queryByText(told) !== null;
+      }, 20_000);
       expect(screen.queryByText(ASKING)).toBeNull();
       expect(within(screen.getByRole('banner')).queryByRole('button', { name: /^Swap · / })).toBeNull();
       await new Promise((r) => setTimeout(r, 500));
