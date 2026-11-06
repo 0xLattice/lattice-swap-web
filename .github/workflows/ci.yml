@@ -37,12 +37,52 @@ jobs:
         with:
           path: dist
 
+  # The page against real chains (e2e/tests/page.rs): built for regtest,
+  # driven in Chromium through a CLI seller's offer on a relay, against a
+  # regtest bitcoind and a lattice-node in Docker, as lattice-swap's own
+  # `nexus-node` job runs its browser buyer. Host networking: the node's RPC
+  # listens on loopback only.
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # lattice-node 3.2.0, as vendor/lattice-swap's CI pins it.
+      NEXUS_NODE_IMAGE: ghcr.io/0xlattice/lattice-node@sha256:b9951cdce3469add47d1c086a46185edc0f3da4d715309b94ed553e008de1d26
+      # The seller's build and the test's, in one target directory: the
+      # dependencies they share build once. Not the wasm build's, whose
+      # build.sh reads its own.
+      E2E_TARGET: ${{ github.workspace }}/e2e/target
+      LATTICE_SWAP: ${{ github.workspace }}/e2e/target/debug/lattice-swap
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - run: docker pull "$NEXUS_NODE_IMAGE"
+      - uses: ./.github/actions/wasm
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # The seller.
+      - run: cargo build --locked -p lattice-swap --target-dir "$E2E_TARGET"
+        working-directory: vendor/lattice-swap
+      - run: cargo test --locked --target-dir "$E2E_TARGET" -- --ignored --nocapture --test-threads=1
+        working-directory: e2e
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e
+          path: e2e/out
+          if-no-files-found: ignore
+
   # The mainnet build, on GitHub Pages, from main: only once the custom
   # domain is set up (README, "Deploy and release"), so nothing is served
   # from the organization's shared github.io origin.
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PAGES_CNAME == 'swap.lattice.build'
-    needs: build
+    needs: [build, e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
