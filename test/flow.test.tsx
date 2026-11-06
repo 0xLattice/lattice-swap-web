@@ -602,8 +602,11 @@ describe('a punished swap', () => {
    * cancelled at t1 and punished t2 later, and the buyer, back to the
    * punish deep, met no seller and ended punished. A copy of the swap as
    * prepared, untaken, waits ahead of it in the store, as swap 00…00. The
-   * seller has not seen its punish deep, and is nowhere to be met. */
-  async function punished(w: World) {
+   * seller has not seen its punish deep, and is nowhere to be met. Its
+   * quiet times out on `clock`, moved past the message timeout, as the
+   * driver's own test does: never on the wall clock, which a slow runner
+   * spends on the fake seller's wasm. */
+  async function punished(w: World, clock: { offset: number }) {
     const { t1, t2 } = JSON.parse(w.offer).template;
     const wallet = await Wallet.open(driverOf(w));
     const buyer = await Buyer.prepare(wallet, { offer: w.offer, policy: POLICY, nexAddress: w.nexAddress });
@@ -635,7 +638,10 @@ describe('a punished swap', () => {
     w.chain.mine(t2 - 1);
     const [punish] = sellerSees(w, bitcoin({ tx: cancel, confirmations: t2 }, null));
     confirm(w, punish);
-    expect(await (await Buyer.resume(wallet, buyer.swapId)).run()).toBe('punished');
+    const resumed = (await Buyer.resume(wallet, buyer.swapId)).run();
+    await until(async () => Object.keys(JSON.parse((await w.store.get(key)).state))[0] === 'AskingShare', 20_000);
+    clock.offset += 61_000;
+    expect(await resumed).toBe('punished');
 
     const record = await w.store.get(key);
     await w.store.delete(key);
@@ -652,9 +658,16 @@ describe('a punished swap', () => {
   const asks = (w: World) => w.seller.log.filter((message: unknown) => message === 'ShareRequest').length;
   const ASKING = 'Asking the seller to release your NEX…';
 
+  /** A world whose driver reads time off `clock`. */
+  async function clocked() {
+    const clock = { offset: 0 };
+    const w = await world({ extra: { now: () => Date.now() + clock.offset } });
+    return { w, clock };
+  }
+
   test('a load asks the seller for s once, and claims the NEX with it', async () => {
-    const w = await world({ extra: { messageTimeout: 300 } });
-    const { key, sellerPunished } = await punished(w);
+    const { w, clock } = await clocked();
+    const { key, sellerPunished } = await punished(w, clock);
     sellerPunished();
     render(<App config={w.config} />);
     await screen.findByText(ASKING, {}, WAIT);
@@ -668,12 +681,13 @@ describe('a punished swap', () => {
   });
 
   test('a seller not met leaves it punished, said so, and the page asks no more this load', async () => {
-    const w = await world({ extra: { messageTimeout: 300 } });
-    const { key } = await punished(w);
+    const { w, clock } = await clocked();
+    const { key } = await punished(w, clock);
     const resume = vi.spyOn(Buyer, 'resume');
     try {
       render(<App config={w.config} />);
       await screen.findByText(ASKING, {}, WAIT);
+      clock.offset += 61_000;
       await screen.findByText('The seller did not release your NEX. This page asks again each time it opens.', {}, WAIT);
       expect(screen.queryByText(ASKING)).toBeNull();
       expect(within(screen.getByRole('banner')).queryByRole('button', { name: /^Swap · / })).toBeNull();
