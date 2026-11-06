@@ -120,7 +120,11 @@ export function Progress(props: {
 
       {status.backupCovers === 'lock' && status.outcome === null && !props.backedUp && (
         <div class="box strong-border inline">
-          <span class="small grow">If this browser’s data is lost, this file gets your BTC back.</span>
+          <span class="small grow">
+            {status.step === 'finishing' || status.step === 'received'
+              ? 'If this browser’s data is lost, this file finishes your swap.'
+              : 'If this browser’s data is lost, this file gets your BTC back.'}
+          </span>
           <button type="button" class="primary" onClick={props.onBackup}>
             Download recovery file
           </button>

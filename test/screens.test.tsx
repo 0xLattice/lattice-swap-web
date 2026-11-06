@@ -206,9 +206,10 @@ describe('progress', () => {
   });
 
   test('received: the NEX is in the address once the claim is in a block, counted past the depth asked for', () => {
-    const received = (nexLock: number) => status({ step: 'received', confirmations: { funding: 6, lockSpend: 6, cancelSpend: null, nexLock } });
+    const received = (nexLock: number) => status({ step: 'received', backupCovers: 'lock', confirmations: { funding: 6, lockSpend: 6, cancelSpend: null, nexLock } });
     progress(received(1));
     expect(current()).toBe('✓NEX received0.5 NEX is in your address · 1 Nexus confirmation.');
+    expect(screen.getByText('If this browser’s data is lost, this file finishes your swap.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Swap again' })).toBeNull();
     cleanup();
     progress(received(5));
