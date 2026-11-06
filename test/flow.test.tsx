@@ -692,7 +692,7 @@ describe('a punished swap', () => {
     try {
       render(<App config={w.config} />);
       await screen.findByText(ASKING, {}, WAIT);
-      const told = 'The seller did not release your NEX. This page asks again each time it opens.';
+      const told = /this page asks the seller again each time it opens\./;
       await until(() => {
         clock.offset += 61_000;
         return screen.queryByText(told) !== null;

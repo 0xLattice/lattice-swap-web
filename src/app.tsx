@@ -380,7 +380,7 @@ export function App({ config }: { config: AppConfig }) {
           {tab('settings', 'Settings')}
           {active && screen !== 'status' && (
             <button type="button" class="tab running" onClick={() => setScreen('status')}>
-              {status.step === 'asking' ? 'Swap · asking the seller' : status.running ? 'Swap · running' : 'Swap · waiting for funds'}
+              {status.step === 'asking' ? 'Swap · asking the seller' : status.step === 'received' ? 'Swap · NEX received' : status.running ? 'Swap · running' : 'Swap · waiting for funds'}
             </button>
           )}
         </div>

@@ -16,7 +16,7 @@ export function stepOf(status: Status): number | null {
   const { step, outcome, confirmations } = status;
   if (step === 'swapping') return confirmations.nexLock === null && !confirmations.funding ? 0 : 1;
   if (step === 'finishing') return 2;
-  if (step === 'done' && outcome === 'swapped') return 3;
+  if (step === 'received' || (step === 'done' && outcome === 'swapped')) return 3;
   return null;
 }
 
@@ -28,7 +28,11 @@ function detail(status: Status, at: number): string {
     return `Your lock has ${confirmations(funding, status.btc_confirmations)}. Waiting for the seller to lock NEX on Nexus. Nothing to do.`;
   }
   if (at === 2) return 'Your browser completes the swap with the seller.';
-  return `${nex(status.nex_amount)} NEX is in your address.`;
+  // The claim is in a block: counted as it deepens, not capped at what
+  // the swap waits for. Once ended, the driver stops watching.
+  const of = status.nex_confirmations;
+  const depth = status.step === 'received' ? `${nexLock ?? 0}` : `${of}+`;
+  return `${nex(status.nex_amount)} NEX is in your address · ${depth} Nexus confirmation${depth === '1' ? '' : 's'}.`;
 }
 
 function Deadlines({ status }: { status: Status }) {
@@ -58,7 +62,7 @@ function Deadlines({ status }: { status: Status }) {
 const ENDS: Record<string, string> = {
   aborted: 'Stopped before anything was at stake. Your BTC is in your wallet.',
   punished:
-    'The seller took your BTC and no NEX arrived: your refund did not confirm before the punish height, so the seller claimed the lock.',
+    'The seller has your BTC and has not released your NEX: your refund did not confirm before the punish height, so the seller claimed the BTC lock.',
   drained:
     'The seller took your BTC and no NEX arrived: the NEX lock was already spent when your browser learned its key.',
 };
@@ -116,7 +120,13 @@ export function Progress(props: {
 
       {status.backupCovers === 'lock' && status.outcome === null && !props.backedUp && (
         <div class="box strong-border inline">
-          <span class="small grow">If this browser’s data is lost, this file gets your BTC back.</span>
+          <span class="small grow">
+            {/* Until the redeem is signed, a restored copy can only refund;
+                from then on a restored copy may claim the NEX instead. */}
+            {status.step === 'swapping'
+              ? 'If this browser’s data is lost, this file gets your BTC back.'
+              : 'If this browser’s data is lost, this file finishes your swap.'}
+          </span>
           <button type="button" class="primary" onClick={props.onBackup}>
             Download recovery file
           </button>
@@ -144,6 +154,9 @@ export function Progress(props: {
       {status.step === 'asking' && (
         <div role="status" class="box strong-border">
           <span class="strong">Asking the seller to release your NEX…</span>
+          <span class="small muted">
+            Your refund window passed and the seller claimed your BTC. If the seller locked NEX, it is still locked, and only you and the seller together can release it.
+          </span>
           {status.warning !== null && <span class="small muted">{bounded(status.warning)}</span>}
         </div>
       )}
@@ -172,9 +185,19 @@ export function Progress(props: {
         <div class="box strong-border">
           <span class="strong">{ENDS[status.outcome ?? ''] ?? `The swap ended: ${status.outcome}.`}</span>
           {status.outcome === 'punished' && (
-            <span class="small muted">The seller did not release your NEX. This page asks again each time it opens.</span>
+            <span class="small muted">
+              If the seller locked NEX and it is still locked, only you and the seller together can release it: this page asks the seller again each time it opens.
+            </span>
           )}
-          <div class="buttons">{swapAgain}</div>
+          <div class="buttons">
+            {status.outcome === 'punished' ? (
+              <button type="button" class="secondary" onClick={props.onSwapAgain}>
+                Swap again
+              </button>
+            ) : (
+              swapAgain
+            )}
+          </div>
         </div>
       )}
 
@@ -189,7 +212,7 @@ export function Progress(props: {
                 <div class="step-body">
                   <span class="step-title">{title}</span>
                   {current && <span class="small muted">{detail(status, i)}</span>}
-                  {current && i === 3 && <div class="buttons">{swapAgain}</div>}
+                  {current && i === 3 && status.step === 'done' && <div class="buttons">{swapAgain}</div>}
                 </div>
               </li>
             );
