@@ -41,11 +41,12 @@ const context = await browser.newContext({ acceptDownloads: false });
 // The test's servers are plain http on loopback, which the page's CSP
 // leaves out of connect-src: the page is served with them let in, the rest
 // of its policy as built.
-const CONNECT = "connect-src 'self' https: wss:";
+// The built meta escapes its quotes.
+const CONNECT = "connect-src &#39;self&#39; https: wss:";
 await context.route(site, async (route) => {
   const response = await route.fetch();
   const html = await response.text();
-  if (!html.includes(CONNECT)) throw new Error(`the page's CSP has no "${CONNECT}"`);
+  if (!html.includes(CONNECT)) throw new Error(`the page's CSP has no "${CONNECT}": ${html}`);
   await route.fulfill({ response, body: html.replace(CONNECT, `${CONNECT} http://127.0.0.1:* ws://127.0.0.1:*`) });
 });
 // The Esplora shim sends no CORS headers, as Esplora does: added here.
