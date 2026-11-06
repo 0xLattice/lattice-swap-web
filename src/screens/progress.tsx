@@ -121,7 +121,7 @@ export function Progress(props: {
       {status.backupCovers === 'lock' && status.outcome === null && !props.backedUp && (
         <div class="box strong-border inline">
           <span class="small grow">
-            {/* Until the redeem is signed, the seller can only refund it;
+            {/* Until the redeem is signed, a restored copy can only refund;
                 from then on a restored copy may claim the NEX instead. */}
             {status.step === 'swapping'
               ? 'If this browser’s data is lost, this file gets your BTC back.'
