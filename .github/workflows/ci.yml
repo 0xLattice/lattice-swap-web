@@ -82,7 +82,7 @@ jobs:
   # from the organization's shared github.io origin.
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PAGES_CNAME == 'swap.lattice.build'
-    needs: build
+    needs: [build, e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

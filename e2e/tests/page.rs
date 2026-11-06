@@ -557,6 +557,14 @@ impl Page {
         }
         boxes
     }
+
+    /// The alerts the page showed.
+    fn alerts(&self) -> Vec<&str> {
+        self.shown
+            .iter()
+            .filter_map(|line| line["alert"].as_str())
+            .collect()
+    }
 }
 
 /// The bounds the page takes regtest's shallow terms under, as VITE_BOUNDS:
@@ -588,6 +596,8 @@ fn the_page_swaps() {
     // the chains only on its poll, every 10 s.
     let deadline = Instant::now() + DEADLINE;
     let mut seller_done = None;
+    // What the page's wallet holds once the lock is funded: its change.
+    let mut change = None;
     let ended = loop {
         assert!(Instant::now() < deadline, "the swap timed out");
         if let Some(ended) = page.ended() {
@@ -599,11 +609,15 @@ fn the_page_swaps() {
                 || (line["step"] == "Seller locks NEX"
                     && line["detail"].as_str().unwrap().starts_with("NEX lock:"))
         });
+        if change.is_none() && page.steps().contains(&"Seller locks NEX") {
+            change = Some(world.received(&wallet));
+        }
         world.mine(false, paced, true);
         thread::sleep(Duration::from_millis(400));
     };
     page.read();
     assert!(ended, "the page failed: {:?}", page.shown);
+    assert_eq!(page.alerts(), Vec::<&str>::new());
     assert_eq!(
         page.steps(),
         [
@@ -653,9 +667,11 @@ fn the_page_swaps() {
     // Redeem pays two fees.
     let seller_wallet = wallet_client(&world.bitcoind, "seller");
     assert_eq!(btc_balance(&seller_wallet), BTC_AMOUNT - BTC_FEE * 2);
-    // The deposit less the lock and the funding's fee: under 1000 sat.
-    let change = world.received(&wallet);
+    // The deposit less the lock and the funding's fee: under 1000 sat,
+    // and untouched since.
+    let change = change.unwrap();
     assert!(change < Amount::from_sat(1_000), "{change}");
+    assert_eq!(world.received(&wallet), change);
     assert!(board.board.offers().is_empty());
 }
 
@@ -672,12 +688,19 @@ fn the_page_refunds_when_the_seller_goes() {
     let (mut seller, swap_id, seller_out) = world.offer(&relay, 24, 40, 2);
     let (mut page, wallet) = Page::open(&world, &relay, "refunds", bounds(&world, 24));
     let deadline = Instant::now() + DEADLINE;
-    while world.seller_state(&swap_id) != "AwaitRedeemSignature" {
+    // Until the seller waits for the redeem signature, and the page shows
+    // its NEX lock one deep.
+    let one_deep = "NEX lock: 1 of 2 Nexus confirmations.";
+    while world.seller_state(&swap_id) != "AwaitRedeemSignature"
+        || !page.details("Seller locks NEX").contains(&one_deep)
+    {
         assert!(Instant::now() < deadline, "the NEX lock timed out");
         page.read();
         world.mine(false, false, true);
         thread::sleep(Duration::from_millis(400));
     }
+    // The lock is in a block: what the wallet holds is the change.
+    let change = world.received(&wallet);
     seller.0.kill().unwrap();
     seller.0.wait().unwrap();
     seller_out.join().unwrap();
@@ -694,16 +717,17 @@ fn the_page_refunds_when_the_seller_goes() {
     };
     page.read();
     assert!(ended, "the page failed: {:?}", page.shown);
-    let boxes = page.boxes();
+    assert_eq!(page.alerts(), Vec::<&str>::new());
+    assert_eq!(page.steps(), ["Lock your BTC", "Seller locks NEX"]);
+    assert_eq!(page.details("Seller locks NEX").last(), Some(&one_deep));
     assert_eq!(
-        boxes.last().copied(),
-        Some("Refunded. Your BTC is back in your wallet."),
-        "{boxes:?}"
+        page.boxes(),
+        [
+            "Refunding your BTC",
+            "Refunded. Your BTC is back in your wallet."
+        ]
     );
-    assert!(boxes.contains(&"Refunding your BTC"), "{boxes:?}");
-    // The lock less cancel's and refund's fees, back in the wallet.
-    let held = world.received(&wallet);
-    assert!(held >= BTC_AMOUNT - BTC_FEE * 2, "{held}");
-    assert!(held < BTC_AMOUNT, "{held}");
+    // The lock less cancel's and refund's fees, back beside the change.
+    assert_eq!(world.received(&wallet), change + BTC_AMOUNT - BTC_FEE * 2);
     assert_eq!(world.nexus.balance(&world.buyer_nex), 0);
 }
