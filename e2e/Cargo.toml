@@ -1,0 +1,25 @@
+# The page's end-to-end test, tests/page.rs: the page built against a
+# regtest bitcoind and a lattice-node, driven in Chromium. The harness is
+# lattice-swap's own, at the vendored commit: its crates, its Esplora shim,
+# and the CLI seller its CI builds. Cargo.lock starts as the vendored one.
+[package]
+name = "lattice-swap-web-e2e"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+swap = { path = "../vendor/lattice-swap/crates/swap" }
+swap-nexus-tx = { path = "../vendor/lattice-swap/crates/swap-nexus-tx" }
+swap-relay = { path = "../vendor/lattice-swap/crates/swap-relay" }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+base64 = "0.22"
+bitcoin = "0.32"
+corepc-node = { version = "0.12", features = ["30_2", "download"] }
+ed25519-dalek = "2"
+hex = "0.4"
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+ureq = { version = "2", default-features = false, features = ["json"] }

@@ -89,12 +89,26 @@ The tests run the page in jsdom against the driver's own fakes
 (`web/driver/test/fakes.js`): a fake Esplora, Nexus node and relay, with the
 seller's swap-wasm machine standing in for the session.
 
+`e2e/` runs the page against real chains: built for regtest, served, and
+driven in Chromium by Playwright (`e2e/page.mjs`), it takes a CLI seller's
+offer from a relay against a regtest bitcoind and a lattice-node in Docker,
+with lattice-swap's own end-to-end harness (`e2e/tests/page.rs`). CI's `e2e`
+job runs it; locally, with Docker, the wasm built and `npm ci`:
+
+```sh
+npx playwright install chromium
+(cd vendor/lattice-swap && cargo build -p lattice-swap --target-dir ../../e2e/target)
+cd e2e && NEXUS_NODE_IMAGE=<the image vendor/lattice-swap's CI pins> \
+  LATTICE_SWAP=$PWD/target/debug/lattice-swap cargo test -- --ignored --test-threads=1
+```
+
 To move to a newer driver, check out another lattice-swap commit in
 `vendor/lattice-swap` and commit the submodule.
 
 ## Deploy and release
 
-CI builds the wasm, then runs the lint, typecheck, tests and both builds.
+CI builds the wasm, then runs the lint, typecheck, tests and both builds,
+and the end-to-end test.
 A push to main deploys the mainnet build to GitHub Pages only once the
 repository variable `PAGES_CNAME` is `swap.lattice.build`. Until then the
 deploy job is skipped, so nothing is published at the default
