@@ -158,7 +158,7 @@ describe('progress', () => {
     progress(status({ step: 'asking', mustStayOpen: true, warning: 'seller: not met', deadlines: DEADLINES }));
     expect(screen.getAllByRole('status').map((s) => s.textContent)).toEqual([
       'Keep this page openAsking the seller to release your NEX. Leave this page open until it settles.',
-      'Asking the seller to release your NEX…Your refund window passed and the seller claimed your BTC. Your NEX is still locked, and only you and the seller together can release it.seller: not met',
+      'Asking the seller to release your NEX…Your refund window passed and the seller claimed your BTC. If the seller locked NEX, it is still locked, and only you and the seller together can release it.seller: not met',
     ]);
     expect(document.querySelector('.steps')).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -225,7 +225,7 @@ describe('progress', () => {
     ['aborted', 'Stopped before anything was at stake. Your BTC is in your wallet.'],
     [
       'punished',
-      'The seller has your BTC and has not released your NEX: your refund did not confirm before the punish height, so the seller claimed the BTC lock. Your NEX stays locked, and only you and the seller together can release it.',
+      'The seller has your BTC and has not released your NEX: your refund did not confirm before the punish height, so the seller claimed the BTC lock.',
     ],
     ['drained', 'The seller took your BTC and no NEX arrived: the NEX lock was already spent when your browser learned its key.'],
   ] as const)('done, %s', (outcome, text) => {

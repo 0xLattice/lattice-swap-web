@@ -62,7 +62,7 @@ function Deadlines({ status }: { status: Status }) {
 const ENDS: Record<string, string> = {
   aborted: 'Stopped before anything was at stake. Your BTC is in your wallet.',
   punished:
-    'The seller has your BTC and has not released your NEX: your refund did not confirm before the punish height, so the seller claimed the BTC lock. Your NEX stays locked, and only you and the seller together can release it.',
+    'The seller has your BTC and has not released your NEX: your refund did not confirm before the punish height, so the seller claimed the BTC lock.',
   drained:
     'The seller took your BTC and no NEX arrived: the NEX lock was already spent when your browser learned its key.',
 };
@@ -149,7 +149,7 @@ export function Progress(props: {
         <div role="status" class="box strong-border">
           <span class="strong">Asking the seller to release your NEX…</span>
           <span class="small muted">
-            Your refund window passed and the seller claimed your BTC. Your NEX is still locked, and only you and the seller together can release it.
+            Your refund window passed and the seller claimed your BTC. If the seller locked NEX, it is still locked, and only you and the seller together can release it.
           </span>
           {status.warning !== null && <span class="small muted">{bounded(status.warning)}</span>}
         </div>
@@ -179,7 +179,9 @@ export function Progress(props: {
         <div class="box strong-border">
           <span class="strong">{ENDS[status.outcome ?? ''] ?? `The swap ended: ${status.outcome}.`}</span>
           {status.outcome === 'punished' && (
-            <span class="small muted">This page asks the seller again each time it opens.</span>
+            <span class="small muted">
+              If the seller locked NEX and it is still locked, only you and the seller together can release it: this page asks the seller again each time it opens.
+            </span>
           )}
           <div class="buttons">
             {status.outcome === 'punished' ? (
