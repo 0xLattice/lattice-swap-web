@@ -12,7 +12,7 @@
 // headline, `{"box"}`, and any alert, `{"alert"}`. It exits once the page
 // offers "Swap again", with a screenshot in `out` either way.
 
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -33,22 +33,20 @@ Object.assign(process.env, {
   VITE_BOUNDS: JSON.stringify(c.bounds),
 });
 await build({ root, logLevel: 'warn', build: { outDir, emptyOutDir: true } });
+// The test's servers are plain http on loopback, which the page's CSP
+// leaves out of connect-src: the built page lets them in, the rest of its
+// policy as built. Changed on disk, not answered by a route: Chromium takes
+// a routed page for a public one, which may not reach loopback.
+const index = join(outDir, 'index.html');
+const CONNECT = "connect-src &#39;self&#39; https: wss:";
+const html = readFileSync(index, 'utf8');
+if (!html.includes(CONNECT)) throw new Error(`the page's CSP has no "${CONNECT}": ${html}`);
+writeFileSync(index, html.replace(CONNECT, `${CONNECT} http://127.0.0.1:* ws://127.0.0.1:*`));
 const server = await preview({ root, logLevel: 'warn', build: { outDir }, preview: { host: '127.0.0.1', port: c.port, strictPort: true } });
 const site = `http://127.0.0.1:${c.port}/`;
 
 const browser = await chromium.launch();
 const context = await browser.newContext({ acceptDownloads: false });
-// The test's servers are plain http on loopback, which the page's CSP
-// leaves out of connect-src: the page is served with them let in, the rest
-// of its policy as built.
-// The built meta escapes its quotes.
-const CONNECT = "connect-src &#39;self&#39; https: wss:";
-await context.route(site, async (route) => {
-  const response = await route.fetch();
-  const html = await response.text();
-  if (!html.includes(CONNECT)) throw new Error(`the page's CSP has no "${CONNECT}": ${html}`);
-  await route.fulfill({ response, body: html.replace(CONNECT, `${CONNECT} http://127.0.0.1:* ws://127.0.0.1:*`) });
-});
 // The Esplora shim sends no CORS headers, as Esplora does: added here.
 await context.route(
   (url) => url.href.startsWith(`${c.esplora}/`),
