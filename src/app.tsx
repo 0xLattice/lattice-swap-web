@@ -293,6 +293,13 @@ export function App({ config }: { config: AppConfig }) {
     if (running !== null ? running !== buyer?.swapId : !active) await resume(w);
   }
 
+  /** Whether the store holds a running swap: a wallet not yet open may
+   * hold one too, so none is said to run only once it is open. */
+  async function runs(): Promise<boolean> {
+    if (wallet !== null) return (await wallet.running()) !== null;
+    return Wallet.exists(driverConfig);
+  }
+
   const tab = (name: Screen, label: string) => (
     <button type="button" class={screen === name ? 'tab on' : 'tab'} onClick={() => setScreen(name)}>
       {label}
@@ -364,7 +371,7 @@ export function App({ config }: { config: AppConfig }) {
         onBackup={backup}
       />
     );
-  else if (screen === 'settings') body = <Settings config={config} onRestore={restored} />;
+  else if (screen === 'settings') body = <Settings config={config} onRestore={restored} swapRuns={runs} />;
   else body = null;
 
   return (

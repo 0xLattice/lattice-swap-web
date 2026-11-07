@@ -26,8 +26,16 @@ The page shows only what the driver exposes. Each screen follows
   stalled. It also shows `refunding`, `refunded`, and each `outcome`.
 - **Wallet**: the balance and deposit address. Withdraw is off while the
   swap is `running`.
-- **Settings**: the Esplora and Nexus read URLs, which you trust for what
-  they report, and Restore from a recovery file.
+- **Settings**: for each chain, the server it is read from: the build's
+  public one, which you trust for what it reports, or your own Esplora or
+  Nexus node. Each is checked as Settings opens, and a new one before it is
+  saved, with the driver's checks (`Wallet#check`), given up after 15
+  seconds. A server of your own must be an `https:` URL, as the page is and
+  a browser fetches no plain http from it: for a Nexus node, its public read
+  port served over https and started with `--public-submit` (the node's
+  loopback RPC is not reachable from a page). A running swap carries on
+  with the servers saved, its checks run again as it resumes. And Restore
+  from a recovery file.
 
 Nothing watches a swap while the page is closed. If a swap stalls, come back
 by the cancel time it shows, and keep the page open until the refund

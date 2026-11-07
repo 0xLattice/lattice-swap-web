@@ -1,7 +1,7 @@
 // The page as a buyer uses it, for tests/page.rs: built for regtest with
 // the test's servers as its VITE_* settings, served by `vite preview`, and
-// driven in Chromium from the Swap screen to the Fund screen. Then it only
-// watches.
+// driven in Chromium from Settings, where both servers must check out, and
+// the Swap screen to the Fund screen. Then it only watches.
 //
 //   node e2e/page.mjs <config.json>
 //
@@ -64,6 +64,12 @@ const say = (line) => console.log(JSON.stringify(line));
 
 try {
   await page.goto(site);
+  // Settings checks both servers as it opens: the build's own, public and
+  // reachable.
+  const header = page.getByRole('banner');
+  await header.getByRole('button', { name: 'Settings' }).click();
+  await main.getByText('Reachable.').nth(1).waitFor({ timeout: 60_000 });
+  await header.getByRole('button', { name: 'Swap', exact: true }).click();
   await main.getByText(/best of 1/).waitFor({ timeout: 60_000 });
   await page.getByLabel('You pay').fill(c.btc_amount);
   await page.getByLabel('Send NEX to').fill(c.nex_address);

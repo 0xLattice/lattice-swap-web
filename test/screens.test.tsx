@@ -1,7 +1,7 @@
 // Each screen's states, as `status()` gives them.
 
 import { describe, expect, test, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { unfinished } from '../src/app';
 import { Fund } from '../src/screens/fund';
 import { Progress, stepOf } from '../src/screens/progress';
@@ -9,7 +9,8 @@ import { download } from '../src/download';
 import { WalletScreen } from '../src/screens/wallet';
 import { Offers } from '../src/screens/offers';
 import { SwapForm } from '../src/screens/swap';
-import { Settings } from '../src/screens/settings';
+import { CHECK_TIMEOUT, Settings } from '../src/screens/settings';
+import { wasm } from 'lattice-swap-driver/wasm.js';
 import type { AppConfig } from '../src/config';
 import type { Status } from '../src/types';
 
@@ -389,19 +390,104 @@ describe('swap', () => {
 });
 
 describe('settings', () => {
-  const config: AppConfig = { network: 'regtest', esplora: 'https://esplora.example', nexus: 'https://nexus.example', relay: null };
+  const config: AppConfig = {
+    network: 'regtest',
+    esplora: 'https://esplora.example',
+    nexus: 'https://nexus.example',
+    defaults: { esplora: 'https://esplora.example', nexus: 'https://public-nexus.example' },
+    relay: null,
+    // No server answers: each check finds it unreachable.
+    driver: { fetch: () => Promise.reject(new Error('offline')) },
+  };
+  const settings = (over: Partial<AppConfig> = {}) =>
+    render(<Settings config={{ ...config, ...over }} onRestore={vi.fn()} swapRuns={async () => false} />);
 
   test('the Nexus read URL can be set', () => {
-    render(<Settings config={config} onRestore={vi.fn()} />);
+    settings();
     expect((screen.getByLabelText('Nexus read URL') as HTMLInputElement).value).toBe('https://nexus.example');
+  });
+
+  test('a public server says whose it is and what it is trusted for; one of your own can go back to public', async () => {
+    settings();
+    expect(screen.getByText('Public (esplora.example)')).toBeTruthy();
+    expect(screen.getByText('You trust esplora.example to show Bitcoin in time to refund: keep amounts small.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Use the public Esplora/ })).toBeNull();
+    expect(screen.getByText('Your node')).toBeTruthy();
+    expect(screen.queryByText(/for how deep the seller's NEX lock is/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Use the public node (public-nexus.example)' })).toBeTruthy();
+    // Each server in use is checked as Settings opens.
+    expect(screen.getAllByText('Checking…')).toHaveLength(2);
+    await waitFor(() => expect(screen.getAllByText('Unreachable: offline')).toHaveLength(2));
+  });
+
+  test('a public Nexus node: the trust in it', () => {
+    settings({ nexus: 'https://public-nexus.example' });
+    expect(screen.getByText('Public (public-nexus.example)')).toBeTruthy();
     expect(screen.queryByText('Your node')).toBeNull();
+    expect(screen.getByText("You trust public-nexus.example for how deep the seller's NEX lock is: keep amounts small.")).toBeTruthy();
+  });
+
+  /** A fetch no server answers until its request is given up: each
+   * request's signal in `asked`. */
+  const hanging = (asked: AbortSignal[]) => (_url: string, init: RequestInit) =>
+    new Promise<Response>((_, reject) => {
+      asked.push(init.signal!);
+      init.signal!.addEventListener('abort', () => reject(init.signal!.reason));
+    });
+
+  test('a check no server answers times out: unreachable, and Save is offered again', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      settings({ driver: { fetch: hanging([]) } });
+      expect(screen.getAllByText('Checking…')).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(CHECK_TIMEOUT);
+      await waitFor(() => expect(screen.getAllByText('Unreachable: timed out')).toHaveLength(2));
+      fireEvent.input(screen.getByLabelText('Bitcoin backend (Esplora)'), { target: { value: 'https://own-esplora.example' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save and reload' }));
+      expect(screen.getByRole('button', { name: 'Checking…' }).hasAttribute('disabled')).toBe(true);
+      await vi.advanceTimersByTimeAsync(CHECK_TIMEOUT);
+      await screen.findByText('Not saved: Unreachable: timed out');
+      expect(screen.getByRole('button', { name: 'Save and reload' }).hasAttribute('disabled')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('closing Settings gives up its checks and a save under way: nothing kept, no reload', async () => {
+    const asked: AbortSignal[] = [];
+    const answers: (() => void)[] = [];
+    const reload = vi.fn();
+    const setItem = vi.fn();
+    vi.stubGlobal('location', { ...location, reload });
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem, removeItem: setItem });
+    try {
+      // Each request answered, as regtest's Esplora would, only once
+      // Settings has closed.
+      const fetch = (_url: string, init: RequestInit) => {
+        asked.push(init.signal!);
+        return new Promise<Response>((resolve) => answers.push(() => resolve(new Response(wasm.bitcoinGenesis('regtest')))));
+      };
+      settings({ driver: { fetch } });
+      fireEvent.input(screen.getByLabelText('Bitcoin backend (Esplora)'), { target: { value: 'https://own-esplora.example' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save and reload' }));
+      await waitFor(() => expect(asked).toHaveLength(3));
+      cleanup();
+      expect(asked.every((signal) => signal.aborted)).toBe(true);
+      answers.forEach((answer) => answer());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(setItem).not.toHaveBeenCalled();
+      expect(reload).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test('a host running its own node: Nexus is "your node", with no URL to set', () => {
-    render(<Settings config={{ ...config, ownNode: true }} onRestore={vi.fn()} />);
+    settings({ ownNode: true });
     expect(screen.queryByLabelText('Nexus read URL')).toBeNull();
     expect(screen.queryByText('https://nexus.example')).toBeNull();
     expect(screen.getByText('Your node').previousSibling?.textContent).toBe('Nexus');
+    expect(screen.queryByRole('button', { name: /^Use the public node/ })).toBeNull();
     expect(screen.getByLabelText('Bitcoin backend (Esplora)')).toBeTruthy();
   });
 });
