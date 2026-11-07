@@ -293,11 +293,10 @@ export function App({ config }: { config: AppConfig }) {
     if (running !== null ? running !== buyer?.swapId : !active) await resume(w);
   }
 
-  /** Whether the store holds a running swap: a wallet not yet open may
-   * hold one too, so none is said to run only once it is open. */
+  /** Whether the open wallet runs a swap: one not open yet, as while
+   * another tab holds it, is not said to. */
   async function runs(): Promise<boolean> {
-    if (wallet !== null) return (await wallet.running()) !== null;
-    return Wallet.exists(driverConfig);
+    return wallet !== null && (await wallet.running()) !== null;
   }
 
   const tab = (name: Screen, label: string) => (
