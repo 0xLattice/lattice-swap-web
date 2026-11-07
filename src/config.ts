@@ -5,6 +5,9 @@ export interface AppConfig {
   network: string;
   esplora: string;
   nexus: string;
+  /** The build's own servers, the public ones: what `esplora` and `nexus`
+   * are unless the buyer set their own. */
+  defaults: Record<Setting, string>;
   /** The Nexus genesis offers must name; the driver's default if unset. */
   nexusGenesis?: string;
   /** The relay whose offers are listed; null if none is configured. */
@@ -53,6 +56,7 @@ export function buildConfig(): AppConfig {
     network,
     esplora: stored(network, 'esplora') ?? env.VITE_ESPLORA,
     nexus: stored(network, 'nexus') ?? env.VITE_NEXUS,
+    defaults: { esplora: env.VITE_ESPLORA, nexus: env.VITE_NEXUS },
     nexusGenesis: env.VITE_NEXUS_GENESIS || undefined,
     relay: env.VITE_RELAY || null,
     bounds: env.VITE_BOUNDS ? JSON.parse(env.VITE_BOUNDS) : undefined,

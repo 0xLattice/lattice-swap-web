@@ -17,9 +17,9 @@ import {
 import { generateKeyPairSync, sign } from 'node:crypto';
 import type { AppConfig } from '../src/config';
 
-export { call, parseTx, POLICY };
+export { call, Chain, esplora, nexus, parseTx, POLICY };
 
-const servers: { close: () => void }[] = [];
+export const servers: { close: () => void }[] = [];
 export const closeServers = () => servers.splice(0).forEach((server) => server.close());
 
 /** The test policy's bounds: the test offer's short timelocks are below
@@ -51,6 +51,8 @@ export async function world({ relay = true, store = new MemoryStore(), extra = {
     network: 'regtest',
     esplora: a.url,
     nexus: node.url,
+    // The test's servers are the build's: public.
+    defaults: { esplora: a.url, nexus: node.url },
     nexusGenesis: 'genesis',
     relay: relay ? board.url : null,
     bounds: BOUNDS,

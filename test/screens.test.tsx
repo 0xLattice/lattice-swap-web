@@ -1,7 +1,7 @@
 // Each screen's states, as `status()` gives them.
 
 import { describe, expect, test, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { unfinished } from '../src/app';
 import { Fund } from '../src/screens/fund';
 import { Progress, stepOf } from '../src/screens/progress';
@@ -389,19 +389,49 @@ describe('swap', () => {
 });
 
 describe('settings', () => {
-  const config: AppConfig = { network: 'regtest', esplora: 'https://esplora.example', nexus: 'https://nexus.example', relay: null };
+  const config: AppConfig = {
+    network: 'regtest',
+    esplora: 'https://esplora.example',
+    nexus: 'https://nexus.example',
+    defaults: { esplora: 'https://esplora.example', nexus: 'https://public-nexus.example' },
+    relay: null,
+    // No server answers: each check finds it unreachable.
+    driver: { fetch: () => Promise.reject(new Error('offline')) },
+  };
+  const settings = (over: Partial<AppConfig> = {}) =>
+    render(<Settings config={{ ...config, ...over }} onRestore={vi.fn()} swapRuns={async () => false} />);
 
   test('the Nexus read URL can be set', () => {
-    render(<Settings config={config} onRestore={vi.fn()} />);
+    settings();
     expect((screen.getByLabelText('Nexus read URL') as HTMLInputElement).value).toBe('https://nexus.example');
+  });
+
+  test('a public server says whose it is and what it is trusted for; one of your own can go back to public', async () => {
+    settings();
+    expect(screen.getByText('Public (esplora.example)')).toBeTruthy();
+    expect(screen.getByText('You trust esplora.example to show Bitcoin in time to refund: keep amounts small.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Use the public Esplora/ })).toBeNull();
+    expect(screen.getByText('Your node')).toBeTruthy();
+    expect(screen.queryByText(/for how deep the seller's NEX lock is/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Use the public node (public-nexus.example)' })).toBeTruthy();
+    // Each server in use is checked as Settings opens.
+    expect(screen.getAllByText('Checking…')).toHaveLength(2);
+    await waitFor(() => expect(screen.getAllByText('Unreachable: offline')).toHaveLength(2));
+  });
+
+  test('a public Nexus node: the trust in it', () => {
+    settings({ nexus: 'https://public-nexus.example' });
+    expect(screen.getByText('Public (public-nexus.example)')).toBeTruthy();
     expect(screen.queryByText('Your node')).toBeNull();
+    expect(screen.getByText("You trust public-nexus.example for how deep the seller's NEX lock is: keep amounts small.")).toBeTruthy();
   });
 
   test('a host running its own node: Nexus is "your node", with no URL to set', () => {
-    render(<Settings config={{ ...config, ownNode: true }} onRestore={vi.fn()} />);
+    settings({ ownNode: true });
     expect(screen.queryByLabelText('Nexus read URL')).toBeNull();
     expect(screen.queryByText('https://nexus.example')).toBeNull();
     expect(screen.getByText('Your node').previousSibling?.textContent).toBe('Nexus');
+    expect(screen.queryByRole('button', { name: /^Use the public node/ })).toBeNull();
     expect(screen.getByLabelText('Bitcoin backend (Esplora)')).toBeTruthy();
   });
 });

@@ -3,6 +3,8 @@
 // module, so a host embedding the page can alias it to its own.
 
 import { call, safe, wasm } from './vendor/lattice-swap/web/driver/src/wasm.js';
+import { Esplora } from './vendor/lattice-swap/web/driver/src/esplora.js';
+import { checkNexus, Nexus } from './vendor/lattice-swap/web/driver/src/views.js';
 import type { Offer } from './src/types';
 
 export * from './vendor/lattice-swap/web/driver/src/index.js';
@@ -14,3 +16,16 @@ export const decodeOffer = (text: string): Offer => call('decodeOffer', text);
 
 /** Whether `address` is a Nexus address. */
 export const isCid = (address: string): boolean => wasm.isCid(address);
+
+/** `Wallet#check`'s two checks, each of one server before it is used:
+ * refuses an Esplora on another network than `network`, and a Nexus node
+ * that takes no transactions, follows another Nexus than `genesis`, or
+ * keeps no state of past blocks. Either throws if it cannot read the
+ * server. The page's fetch, as `Wallet.open` calls it: a browser's
+ * refuses to be called as another object's method. */
+type Fetch = typeof globalThis.fetch;
+const pageFetch: Fetch = (...args) => globalThis.fetch(...args);
+export const checkEsplora = (url: string, network: string, fetch: Fetch = pageFetch): Promise<void> =>
+  new Esplora(url, fetch).checkNetwork(network);
+export const checkNexusNode = (url: string, genesis: string, fetch: Fetch = pageFetch): Promise<void> =>
+  checkNexus(new Nexus(url, fetch), genesis);

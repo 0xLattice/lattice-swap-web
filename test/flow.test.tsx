@@ -1,12 +1,12 @@
 // Whole flows through the page, against the driver's fakes.
 
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { MemoryStore, Wallet, Buyer } from 'lattice-swap-driver';
 import { Locks, until } from '../vendor/lattice-swap/web/driver/test/fakes.js';
 import { App } from '../src/app';
 import { btc } from '../src/format';
-import { call, confirm, deposit, driverOf, posted, POLICY, signedOffer, world, type World } from './world';
+import { call, Chain, confirm, deposit, driverOf, esplora, nexus, posted, POLICY, servers, signedOffer, world, type World } from './world';
 import { listOffers } from '../src/offers';
 
 const WAIT = { timeout: 20_000 };
@@ -451,6 +451,113 @@ describe('restore', () => {
     tab(/^Settings/);
     upload(file);
     await screen.findByText('refused: the store holds another wallet', {}, WAIT);
+  });
+});
+
+describe('settings', () => {
+  /** The saved settings: a store of the test's own, as Node's
+   * `localStorage` stands over jsdom's where it has one. */
+  const kept = new Map<string, string>();
+  const saved = (name: string) => kept.get(`lattice-swap:regtest:${name}`) ?? null;
+  const reload = vi.fn();
+  /** Settings over `w`, a reload only noted, once `ready` shows. */
+  async function settings(w: World, config = w.config, ready?: string) {
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => kept.get(key) ?? null,
+      setItem: (key: string, value: string) => kept.set(key, value),
+      removeItem: (key: string) => kept.delete(key),
+    });
+    vi.stubGlobal('location', { ...location, reload });
+    render(<App config={config} />);
+    if (ready !== undefined) await screen.findByText(ready, {}, WAIT);
+    tab(/^Settings/);
+  }
+  const set = (label: string, value: string) => fireEvent.input(screen.getByLabelText(label), { target: { value } });
+  /** A server of the test's, closed with the rest. */
+  async function server<T extends { close: () => void }>(made: Promise<T>): Promise<T> {
+    const s = await made;
+    servers.push(s);
+    return s;
+  }
+  afterEach(() => {
+    kept.clear();
+    reload.mockClear();
+    vi.unstubAllGlobals();
+  });
+
+  test('the servers in use are checked as Settings opens: public and reachable, or why not', async () => {
+    const w = await world();
+    await settings(w);
+    await waitFor(() => expect(screen.getAllByText('Reachable.')).toHaveLength(2), WAIT);
+    expect(screen.getByText(`Public (${new URL(w.config.esplora).host})`)).toBeTruthy();
+    expect(screen.getByText(`Public (${new URL(w.config.nexus).host})`)).toBeTruthy();
+    cleanup();
+
+    const down = await server(nexus({ down: true }));
+    await settings(w, { ...w.config, nexus: down.url });
+    expect(screen.getByText('Your node')).toBeTruthy();
+    await screen.findByText(/^Unreachable: .*\/api\/chain\/info: 503 down$/, {}, WAIT);
+  });
+
+  test('a server the driver refuses is not saved, with its reason', async () => {
+    const w = await world();
+    const signet = new Chain();
+    signet.genesis = '00'.repeat(32);
+    const wrong = await server(esplora(signet));
+    const readOnly = await server(nexus({ acceptsSubmit: false }));
+    const otherNexus = await server(nexus({ genesis: 'other' }));
+    await settings(w);
+    set('Bitcoin backend (Esplora)', wrong.url);
+    click('Save and reload');
+    await screen.findByText(/^Not saved: refused: the Esplora's genesis is 0{64}, not regtest's /, {}, WAIT);
+    set('Bitcoin backend (Esplora)', w.config.esplora);
+    set('Nexus read URL', readOnly.url);
+    click('Save and reload');
+    await screen.findByText(`Not saved: refused: ${readOnly.url} takes no transactions: give a Nexus node that does`, {}, WAIT);
+    set('Nexus read URL', otherNexus.url);
+    click('Save and reload');
+    await screen.findByText(/^Not saved: refused: .*genesis/, {}, WAIT);
+    expect(saved('esplora')).toBeNull();
+    expect(saved('nexus')).toBeNull();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  test('a server of your own that passes is saved; going back to public clears it', async () => {
+    const w = await world();
+    const own = await server(nexus());
+    await settings(w);
+    set('Nexus read URL', own.url);
+    click('Save and reload');
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce(), WAIT);
+    expect(saved('nexus')).toBe(own.url);
+    // The public one typed in again is the public one: nothing kept.
+    expect(saved('esplora')).toBeNull();
+    cleanup();
+
+    await settings(w, { ...w.config, nexus: own.url });
+    click(`Use the public node (${new URL(w.config.nexus).host})`);
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(2), WAIT);
+    expect(saved('nexus')).toBeNull();
+  });
+
+  test('no server is saved while a swap runs: it keeps those it started with', async () => {
+    const w = await world();
+    const wallet = await Wallet.open(driverOf(w));
+    const buyer = await Buyer.prepare(wallet, { offer: w.offer, policy: POLICY, nexAddress: w.nexAddress });
+    deposit(w, wallet.address, 1_100_000);
+    const stop = new AbortController();
+    const done = buyer.run(stop.signal);
+    await until(() => posted(w).length === 1, 20_000);
+    stop.abort();
+    await done;
+    const own = await server(nexus());
+    // The page resumes the swap: its wallet is open.
+    await settings(w, w.config, 'Lock your BTC');
+    set('Nexus read URL', own.url);
+    click('Save and reload');
+    await screen.findByText('Not saved: a swap is running, and keeps the servers it started with. Change them once it ends.', {}, WAIT);
+    expect(saved('nexus')).toBeNull();
+    expect(reload).not.toHaveBeenCalled();
   });
 });
 
