@@ -17,7 +17,7 @@ import {
 import { generateKeyPairSync, sign } from 'node:crypto';
 import type { AppConfig } from '../src/config';
 
-export { call, Chain, esplora, nexus, parseTx, POLICY };
+export { call, Chain, esplora, nexus, parseTx, POLICY, serve };
 
 export const servers: { close: () => void }[] = [];
 export const closeServers = () => servers.splice(0).forEach((server) => server.close());

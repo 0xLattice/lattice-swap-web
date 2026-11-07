@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { checkEsplora, checkNexusNode, DEFAULTS } from 'lattice-swap-driver';
-import { saveSetting, type AppConfig, type Setting } from '../config';
+import { sameServer, saveSetting, type AppConfig, type Setting } from '../config';
 import { bounded } from '../format';
 
 /** `url`'s host, or `url` if it is none. */
@@ -15,9 +15,10 @@ function host(url: string): string {
 /** What a check of a server found: null while it runs. */
 type Checked = { ok: boolean; text: string } | null;
 
-/** The driver's reason for refusing a server, or why it could not be
- * read. */
-const why = (e: Error) => (e.message.startsWith('refused:') ? e.message : `Unreachable: ${e.message}`);
+/** How long a check waits on a server before it counts as unreachable. */
+export const CHECK_TIMEOUT = 15_000;
+
+type Fetch = typeof globalThis.fetch;
 
 export function Settings({
   config,
@@ -26,8 +27,8 @@ export function Settings({
 }: {
   config: AppConfig;
   onRestore: (file: string) => Promise<void>;
-  /** Whether a swap is running, asked of the wallet: it keeps the servers
-   * it started with, as a reload on others would carry it on there. */
+  /** Whether a swap is running, asked of the wallet: it carries on with
+   * new servers once they are saved, checked again as it resumes. */
   swapRuns: () => Promise<boolean>;
 }) {
   const [esplora, setEsplora] = useState(config.esplora);
@@ -36,58 +37,109 @@ export function Settings({
   const [checked, setChecked] = useState<Record<Setting, Checked>>({ esplora: null, nexus: null });
   const [saving, setSaving] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  const [runs, setRuns] = useState(false);
+  // Aborted once Settings closes: a check or save still running ends
+  // there, and changes nothing.
+  const [closed] = useState(() => new AbortController());
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
-  const fetch = config.driver?.fetch as typeof globalThis.fetch | undefined;
-  const check: Record<Setting, (url: string) => Promise<void>> = {
-    esplora: (url) => checkEsplora(url, config.network, fetch),
-    nexus: (url) => checkNexusNode(url, genesis, fetch),
+  const pageFetch = config.driver?.fetch as Fetch | undefined;
+  const drivers: Record<Setting, (url: string, fetch: Fetch) => Promise<void>> = {
+    esplora: (url, fetch) => checkEsplora(url, config.network, fetch),
+    nexus: (url, fetch) => checkNexusNode(url, genesis, fetch),
   };
-  const changed = esplora.trim() !== config.esplora || nexus.trim() !== config.nexus;
+  const changed = !sameServer(esplora, config.esplora) || !sameServer(nexus, config.nexus);
 
-  // The servers in use, checked as the page opens Settings.
-  useEffect(() => {
-    let stopped = false;
-    for (const name of ['esplora', 'nexus'] as const) {
-      check[name](config[name]).then(
-        () => ({ ok: true, text: 'Reachable.' }),
-        (e: Error) => ({ ok: false, text: why(e) }),
-      ).then((result) => !stopped && setChecked((was) => ({ ...was, [name]: result })));
+  /** The driver's check of `url` for `name`, given up after
+   * CHECK_TIMEOUT or once Settings closes: one a server could not answer
+   * is unreachable; one it answered and the driver refused, refused with
+   * the driver's reason. */
+  async function check(name: Setting, url: string): Promise<{ ok: boolean; text: string }> {
+    // The page is https, and a browser fetches no plain http from it.
+    if (location.protocol === 'https:' && !/^https:\/\//i.test(url.trim())) {
+      return { ok: false, text: 'refused: must be an https URL' };
     }
-    return () => {
-      stopped = true;
+    const stop = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stop.abort();
+    }, CHECK_TIMEOUT);
+    const close = () => stop.abort();
+    closed.signal.addEventListener('abort', close);
+    const signal = stop.signal;
+    const given = new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    given.catch(() => {});
+    /** Whether the server failed to answer the last request. */
+    let unread = false;
+    const fetch: Fetch = async (input, init) => {
+      try {
+        const response = await (pageFetch ?? globalThis.fetch)(input, { ...init, signal });
+        // A missing answer is the driver's to judge: some it allows.
+        unread = !response.ok && response.status !== 404;
+        return response;
+      } catch (e) {
+        unread = true;
+        throw e;
+      }
     };
+    try {
+      await Promise.race([drivers[name](url, fetch), given]);
+      return { ok: true, text: 'Reachable.' };
+    } catch (e) {
+      if (timedOut) return { ok: false, text: 'Unreachable: timed out' };
+      // swap-wasm throws its reasons as strings.
+      const message = e instanceof Error ? e.message : String(e);
+      if (unread) return { ok: false, text: `Unreachable: ${message}` };
+      return { ok: false, text: message.startsWith('refused:') ? message : `refused: ${message}` };
+    } finally {
+      clearTimeout(timer);
+      closed.signal.removeEventListener('abort', close);
+    }
+  }
+
+  // The servers in use, checked as the page opens Settings, and whether a
+  // swap runs on them.
+  useEffect(() => {
+    for (const name of ['esplora', 'nexus'] as const) {
+      check(name, config[name]).then((result) => !closed.signal.aborted && setChecked((was) => ({ ...was, [name]: result })));
+    }
+    swapRuns().then(
+      (r) => !closed.signal.aborted && setRuns(r),
+      () => {},
+    );
+    return () => closed.abort();
   }, []);
 
   /** Saves `next`, an empty or the public URL for the public server,
    * once the driver's checks pass for each new server of your own, and
-   * reloads onto them; saves nothing if a check refuses one, or while a
-   * swap runs. */
+   * reloads onto them; saves nothing if a check refuses one, or if
+   * Settings closes first. */
   const save = async (next: Record<Setting, string>) => {
     setSaving(true);
     setRefused(null);
-    try {
-      if (await swapRuns()) throw new Error('Not saved: a swap is running, and keeps the servers it started with. Change them once it ends.');
-      const own = (name: Setting) => {
-        const url = next[name].trim();
-        return url === '' || url === config.defaults[name] ? '' : url;
-      };
-      for (const name of ['esplora', 'nexus'] as const) {
-        const url = own(name);
-        if (url === '' || url === config[name]) continue;
-        try {
-          await check[name](url);
-        } catch (e) {
-          throw new Error(`Not saved: ${why(e as Error)}`);
-        }
+    const own = (name: Setting) => {
+      const url = next[name].trim();
+      return url === '' || sameServer(url, config.defaults[name]) ? '' : url;
+    };
+    for (const name of ['esplora', 'nexus'] as const) {
+      const url = own(name);
+      if (url === '' || sameServer(url, config[name])) continue;
+      const result = await check(name, url);
+      if (closed.signal.aborted) return;
+      if (!result.ok) {
+        setRefused(`Not saved: ${result.text}`);
+        setSaving(false);
+        return;
       }
-      saveSetting(config.network, 'esplora', own('esplora'));
-      // A host's own node is not the buyer's to set.
-      if (!config.ownNode) saveSetting(config.network, 'nexus', own('nexus'));
-      location.reload();
-    } catch (e) {
-      setRefused((e as Error).message);
-      setSaving(false);
     }
+    // A host's own node is not the buyer's to set.
+    const kept = saveSetting(config.network, 'esplora', own('esplora')) && (config.ownNode || saveSetting(config.network, 'nexus', own('nexus')));
+    if (!kept) {
+      setRefused('Not saved: this browser keeps no settings (private mode?)');
+      setSaving(false);
+      return;
+    }
+    location.reload();
   };
   /** The check of the server `name` is read from. */
   const status = (name: Setting) => {
@@ -101,7 +153,7 @@ export function Settings({
   /** Which server a chain is read from, its check, and the trust a public
    * one asks for; `of` names one of your own. */
   const server = (name: Setting, of: string, trust: (host: string) => string) => {
-    const isPublic = config[name] === config.defaults[name];
+    const isPublic = sameServer(config[name], config.defaults[name]);
     return (
       <>
         <span>{isPublic ? `Public (${host(config[name])})` : `Your ${of}`}</span>
@@ -151,8 +203,10 @@ export function Settings({
         </div>
       )}
       <span class="small muted">
-        These servers are trusted to report the chains honestly. Use your own for the strongest guarantees.
+        These servers are trusted to report the chains honestly. Use your own for the strongest guarantees. Yours must
+        be an https URL{config.ownNode ? '' : ": a Nexus node's public read port, started with --public-submit"}.
       </span>
+      {runs && <span class="small muted">A swap is running: it carries on with the servers you save.</span>}
       {refused !== null && (
         <p role="alert" class="error">
           {bounded(refused)}
