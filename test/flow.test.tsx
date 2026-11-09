@@ -286,6 +286,8 @@ describe('a swap through the page', () => {
 
   test('priced without a wallet, the lock fee is what an empty wallet needs', async () => {
     const w = await world();
+    // A fractional estimate, so the target, the rounding and the floor all count.
+    w.chain.fees = { '1': 40, '6': 12.3, '144': 0.5 };
     const wallet = await Wallet.open(driverOf(w));
     const { need } = await wallet.need(1_000_000);
     expect(await lockFee(w.config.esplora, 1_000_000)).toBe(need - 1_000_000);
