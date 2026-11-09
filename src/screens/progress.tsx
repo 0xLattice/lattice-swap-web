@@ -1,3 +1,4 @@
+import { received } from '../costs';
 import { reminder } from '../download';
 import { bounded, btc, nex, when } from '../format';
 import type { Status } from '../types';
@@ -32,7 +33,7 @@ function detail(status: Status, at: number): string {
   // the swap waits for. Once ended, the driver stops watching.
   const of = status.nex_confirmations;
   const depth = status.step === 'received' ? `${nexLock ?? 0}` : `${of}+`;
-  return `${nex(status.nex_amount)} NEX is in your address · ${depth} Nexus confirmation${depth === '1' ? '' : 's'}.`;
+  return `${nex(received(status.nex_amount, status.nex_fee))} NEX is in your address · ${depth} Nexus confirmation${depth === '1' ? '' : 's'}.`;
 }
 
 function Deadlines({ status }: { status: Status }) {
@@ -110,7 +111,7 @@ export function Progress(props: {
       )}
       <div>
         <div class="label">Swap</div>
-        <h1>{`${btc(status.btc_amount)} BTC → ${nex(status.nex_amount)} NEX`}</h1>
+        <h1>{`${btc(status.btc_amount)} BTC → ${nex(received(status.nex_amount, status.nex_fee))} NEX`}</h1>
         {status.nexAddress !== null && (
           <span class="small muted">
             To <code class="break">{status.nexAddress}</code>

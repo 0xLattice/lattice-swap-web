@@ -32,10 +32,13 @@ export interface Status {
   backupCovers: 'wallet' | 'lock';
   /** Taken its offer and not ended: no other swap, and no withdrawal. */
   running: boolean;
-  /** The swap's terms: sat, sat a NEX, and NEX base units. */
+  /** The swap's terms: sat, sat a NEX, and NEX base units: `nex_amount`
+   * is what the seller locks, and the claim pays `nex_fee` of it, so the
+   * buyer receives `nex_amount - nex_fee`. */
   btc_amount: number;
   price: number;
   nex_amount: number;
+  nex_fee: number;
   /** How deep each lock must be. */
   btc_confirmations: number;
   nex_confirmations: number;

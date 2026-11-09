@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Buyer, DEFAULTS, IndexedDBStore, lockFee, Wallet } from 'lattice-swap-driver';
-import type { AppConfig } from './config';
+import { policyFor, type AppConfig } from './config';
 import { bounded, btc, parseBtc } from './format';
 import { listOffers, offerFor } from './offers';
 import type { Balance, Listed, Status } from './types';
@@ -27,6 +27,13 @@ const statusOf = (buyer: Buyer) => buyer.status() as Status;
  * the header's running swap. */
 export const unfinished = (status: Status) =>
   status.outcome === null && status.step !== 'offer-gone' && status.step !== 'cancelled';
+
+/** A refusal of the engine's, which names the CLI's flags, in the page's
+ * words: mainnet NEX for test BTC, refused unless the policy opts in. */
+export function readable(message: string): string {
+  const test = /^refused: mainnet NEX for (\S+) BTC/.exec(message);
+  return test === null ? message : `Refused: this offer trades real NEX for ${test[1]} BTC, which is worth nothing.`;
+}
 
 export interface OffersState {
   list: Listed[];
@@ -81,7 +88,7 @@ export function App({ config }: { config: AppConfig }) {
     });
     next
       .run(stop.signal)
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setError(readable(e.message)))
       .finally(() => {
         if (run.current !== stop) return;
         setRunEnded(true);
@@ -237,10 +244,9 @@ export function App({ config }: { config: AppConfig }) {
     const btcAmount = parseBtc(amount);
     if (btcAmount === null) return;
     const w = wallet ?? (await open());
-    const prepared = await Buyer.prepare(w, {
-      offer: offer.text,
-      policy: { ...config.bounds, btc_amount: btcAmount, price: offer.offer.quote.price },
-      nexAddress: nexAddress.trim(),
+    const policy = policyFor(config, btcAmount, offer.offer.quote.price);
+    const prepared = await Buyer.prepare(w, { offer: offer.text, policy, nexAddress: nexAddress.trim() }).catch((e: Error) => {
+      throw new Error(readable(e.message));
     });
     keep();
     await follow(prepared);

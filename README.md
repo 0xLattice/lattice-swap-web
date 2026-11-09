@@ -18,7 +18,8 @@ The page shows only what the driver exposes. Each screen follows
   `need`, `wallet.confirmed` and `wallet.unconfirmed`. If the offer is gone
   (`step: offer-gone`), it says so and you pick another.
 - **Progress** (`swapping`, `finishing`, `asking`, `done`): the amounts and NEX
-  address from `btc_amount`, `nex_amount` and `nexAddress`, and four steps
+  address from `btc_amount`, `nex_amount` less `nex_fee` (the NEX that
+  arrives, as Review's "You get") and `nexAddress`, and four steps
   from `confirmations`, each "n of" `btc_confirmations` or
   `nex_confirmations`. It asks for the recovery file once `backupCovers` is
   `lock`, shows `deadlines` as a reminder, and shows the "Keep this page
@@ -39,7 +40,9 @@ The page shows only what the driver exposes. Each screen follows
 
 Nothing watches a swap while the page is closed. If a swap stalls, come back
 by the cancel time it shows, and keep the page open until the refund
-confirms.
+confirms. While it waits unconfirmed, the open page bumps the refund's fee
+by CPFP, submitting the pair to the Esplora's `POST /txs/package`, as
+mempool.space serves it.
 
 ## Configuration
 
@@ -56,6 +59,11 @@ environment variable of the same name overrides them:
 
 `npm run build` writes the mainnet page to `dist/`. `npm run build:signet`
 writes the signet page to `dist-signet/`.
+
+Signet swaps trade on mainnet's Nexus: real NEX for test coins worth
+nothing. The driver refuses such an offer unless the buyer's policy sets
+`test_btc_for_mainnet_nex`, so a page built for any network but `bitcoin`
+sets it, and the mainnet page never does.
 
 ### One origin per network
 
