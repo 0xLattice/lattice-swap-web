@@ -316,7 +316,7 @@ describe('offers', () => {
     text: String(price),
     offer: {
       quote: { price, min_btc_amount: 10_000, max_btc_amount: 1_000_000 },
-      template: { swap_id: String(price), btc_fee: 1000, nex_fee: 100, t1: 288, t2: 144, btc_confirmations: 6, nex_confirmations: 24, margin: 6, nexus_genesis: 'g' },
+      template: { swap_id: String(price), btc_fee: 1000, nex_fee: 100, t1: 288, t2: 144, btc_confirmations: 6, nex_confirmations: 12, margin: 6, nexus_genesis: 'g' },
       btc_network: 'bitcoin',
       relay: 'https://relay.example',
       seller: 's',
