@@ -88,7 +88,7 @@ export function App({ config }: { config: AppConfig }) {
     });
     next
       .run(stop.signal)
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setError(readable(e.message)))
       .finally(() => {
         if (run.current !== stop) return;
         setRunEnded(true);
