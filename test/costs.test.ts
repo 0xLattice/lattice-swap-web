@@ -43,3 +43,10 @@ test('no NEX left after the claim fee: no rate, all fees', () => {
   expect(c.effective).toBeNull();
   expect(c.feeShare).toBe(1);
 });
+
+test('fractions that round to none read as less than one', () => {
+  expect(sat(0.1)).toBe('<1 sat');
+  expect(sat(0)).toBe('0 sat');
+  expect(percent(0.0002)).toBe('<0.1%');
+  expect(percent(0)).toBe('0.0%');
+});

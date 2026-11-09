@@ -1,8 +1,8 @@
 // The page: the driver's wallet and one buyer at a time, and the screens
 // over them. Every state shown is the driver's `status()`.
 
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Buyer, DEFAULTS, IndexedDBStore, Wallet } from 'lattice-swap-driver';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { Buyer, DEFAULTS, IndexedDBStore, lockFee, Wallet } from 'lattice-swap-driver';
 import type { AppConfig } from './config';
 import { bounded, btc, parseBtc } from './format';
 import { listOffers, offerFor } from './offers';
@@ -299,6 +299,17 @@ export function App({ config }: { config: AppConfig }) {
     return wallet !== null && (await wallet.running()) !== null;
   }
 
+  /** The lock's Bitcoin fee for `sats`: what the wallet needs above it,
+   * or, in a browser with no wallet yet, priced without one: none is made
+   * to price it, only once the buyer starts. */
+  const priceLock = useCallback(
+    async (sats: number) =>
+      wallet !== null
+        ? (await wallet.need(sats)).need - sats
+        : lockFee(driverConfig.esplora, sats, (driverConfig as { fetch?: typeof fetch }).fetch),
+    [wallet],
+  );
+
   const tab = (name: Screen, label: string) => (
     <button type="button" class={screen === name ? 'tab on' : 'tab'} onClick={() => setScreen(name)}>
       {label}
@@ -327,7 +338,7 @@ export function App({ config }: { config: AppConfig }) {
   else if (screen === 'review' && offer !== null)
     body = (
       <Review
-        wallet={wallet}
+        lockFee={priceLock}
         offer={offer.offer}
         sats={parseBtc(amount) ?? 0}
         nexAddress={nexAddress.trim()}

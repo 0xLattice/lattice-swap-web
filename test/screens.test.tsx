@@ -10,7 +10,6 @@ import { WalletScreen } from '../src/screens/wallet';
 import { Offers } from '../src/screens/offers';
 import { SwapForm } from '../src/screens/swap';
 import { Review } from '../src/screens/review';
-import type { Wallet } from 'lattice-swap-driver';
 import { CHECK_TIMEOUT, Settings } from '../src/screens/settings';
 import { wasm } from 'lattice-swap-driver/wasm.js';
 import type { AppConfig } from '../src/config';
@@ -393,41 +392,49 @@ describe('swap', () => {
 
 describe('review', () => {
   // A live testnet run's terms: 1,000 sat a NEX, btc_fee 1,800 sat.
-  const offer = {
-    quote: { price: 1_000, min_btc_amount: 4_146, max_btc_amount: 1_000_000 },
-    template: { swap_id: 's', btc_fee: 1_800, nex_fee: 1_000, t1: 20, t2: 20, btc_confirmations: 1, nex_confirmations: 1, margin: 3, nexus_genesis: 'g' },
+  const terms = (nex_fee = 1_000) => ({
+    quote: { price: 1_000, min_btc_amount: 4_146, max_btc_amount: 100_000_000 },
+    template: { swap_id: 's', btc_fee: 1_800, nex_fee, t1: 20, t2: 20, btc_confirmations: 1, nex_confirmations: 1, margin: 3, nexus_genesis: 'g' },
     btc_network: 'regtest',
     relay: 'https://relay.example',
     seller: 's',
-  };
-  /** A wallet whose lock costs `fee` sat above the amount. */
-  const wallet = (fee: number) => ({ need: async (amount: number) => ({ enough: true, need: amount + fee }) }) as unknown as Wallet;
-  const review = (sats: number, w: Wallet | null) =>
-    render(<Review wallet={w} offer={offer} sats={sats} nexAddress="bafynex" onStart={vi.fn()} onBack={vi.fn()} />);
+  });
+  const review = (sats: number, lockFee: () => Promise<number>, offer = terms()) =>
+    render(<Review lockFee={lockFee} offer={offer} sats={sats} nexAddress="bafynex" onStart={vi.fn()} onBack={vi.fn()} />);
   const value = (label: string) => screen.getByText(label).nextSibling?.textContent;
 
   test('a tiny swap shows every fee and the rate they make', async () => {
-    review(8_000, wallet(1_100));
+    review(8_000, async () => 1_100);
     await waitFor(() => expect(value('Bitcoin fee to lock it')).toBe('~1,100 sat'));
     expect(value('You pay')).toBe('0.00008000 BTC');
     expect(value('You get')).toBe('7.999 NEX');
     expect(value('Swap amount')).toBe('8,000 sat');
-    expect(value('Nexus fee to claim the NEX')).toBe('0.001 NEX (~1 sat)');
     expect(value('Total from your wallet')).toBe('~9,100 sat');
+    expect(value('Nexus fee to claim the NEX')).toBe('0.001 NEX (~1 sat)');
     expect(value('Offer price')).toBe('1,000 sat a NEX');
     expect(value('Your price with fees')).toBe('~1,138 sat a NEX');
     expect(value('Fees')).toBe('~12% of what you pay');
-    expect(screen.getByText(/^If the swap fails, 4,400 sat comes back to your wallet/).textContent).toMatch(
+    // The total sits under the Bitcoin rows it sums, above the Nexus fee.
+    const labels = [...document.querySelectorAll('[data-testid="costs"] .row > span:first-child')].map((e) => e.textContent);
+    expect(labels.slice(0, 4)).toEqual(['Swap amount', 'Bitcoin fee to lock it', 'Total from your wallet', 'Nexus fee to claim the NEX']);
+    expect(screen.getByText(/^If the seller vanishes after your BTC is locked, 4,400 sat comes back/).textContent).toMatch(
       /cancel and refund each pay a 1,800 sat Bitcoin fee from it, and the lock fee is spent\./,
     );
   });
 
-  test('with no wallet the lock fee is unknown and left out', () => {
-    review(8_000, null);
-    expect(value('Bitcoin fee to lock it')).toBe('unknown');
-    expect(value('Total from your wallet')).toBe('8,000 sat');
-    expect(value('Your price with fees')).toBe('1,000 sat a NEX');
-    expect(screen.getByText(/^Not counting the Bitcoin fee to lock/)).toBeTruthy();
+  test('a fee too small to round shows as less than one', async () => {
+    review(1_000_000, async () => 200, terms(100));
+    await waitFor(() => expect(value('Fees')).toBe('<0.1% of what you pay'));
+    expect(value('Nexus fee to claim the NEX')).toBe('0.0001 NEX (<1 sat)');
+  });
+
+  test('a lock fee that could not be priced: no figure leaves it out', async () => {
+    review(8_000, () => Promise.reject(new Error('esplora down')));
+    await waitFor(() => expect(value('Bitcoin fee to lock it')).toBe('unknown'));
+    expect(value('Total from your wallet')).toBe('at least 8,000 sat');
+    expect(value('Your price with fees')).toBe('at least 1,000 sat a NEX');
+    expect(value('Fees')).toBe('unknown');
+    expect(screen.getByText(/^The Bitcoin fee to lock could not be priced right now/)).toBeTruthy();
   });
 });
 

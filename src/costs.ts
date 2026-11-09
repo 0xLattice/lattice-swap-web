@@ -63,13 +63,20 @@ export function costs(offer: Offer, amount: number, lockFee: number | null): Cos
   };
 }
 
-/** `value` sat, rounded, with thousands separators. */
+/** `value` sat, rounded, with thousands separators; "<1 sat" for a
+ * fraction that would round to none. */
 export function sat(value: number): string {
+  if (value > 0 && value < 0.5) return '<1 sat';
   return `${Math.round(value).toLocaleString('en-US')} sat`;
 }
 
-/** `share` as a percent: one decimal below 10%, none above. */
+/** `share` as a percent: one decimal below 10%, none above; "<0.1%" for
+ * a share that would round to none. */
 export function percent(share: number): string {
   const p = share * 100;
+  if (p > 0 && p < 0.05) return '<0.1%';
   return `${p < 10 ? p.toFixed(1) : Math.round(p)}%`;
 }
+
+/** `text`, an estimate, marked as one: "<…" says so already. */
+export const about = (text: string) => (text.startsWith('<') ? text : `~${text}`);
