@@ -1,7 +1,8 @@
 import { useState } from 'preact/hooks';
 import { isCid } from 'lattice-swap-driver';
 import type { OffersState } from '../app';
-import { bounded, btc, nex, nexFor, parseBtc, refundAfter } from '../format';
+import { costs } from '../costs';
+import { bounded, btc, nex, parseBtc, refundAfter } from '../format';
 import type { Balance, Listed } from '../types';
 import { Row } from './ui';
 
@@ -90,7 +91,7 @@ export function SwapForm(props: {
           <span class="label">You get</span>
           <div class="amount">
             <span class="big" data-testid="quote">
-              {quote && inRange ? nex(nexFor(sats!, quote.price)) : '0'}
+              {offer && inRange ? nex(costs(offer.offer, sats!, null).receive) : '0'}
             </span>
             <span class="unit">NEX</span>
           </div>

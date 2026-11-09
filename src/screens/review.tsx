@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { Wallet } from 'lattice-swap-driver';
-import { bounded, btc, nex, nexFor, refundAfter } from '../format';
+import { costs, percent, sat } from '../costs';
+import { bounded, btc, nex, refundAfter } from '../format';
 import type { Offer } from '../types';
 import { Row } from './ui';
 
@@ -22,16 +23,17 @@ export function Review(props: {
   onBack: () => void;
 }) {
   const { offer, sats } = props;
-  const [fee, setFee] = useState<string>(props.wallet === null ? 'unknown' : '…');
+  /** The lock fee: null while unknown, undefined while it is priced. */
+  const [fee, setFee] = useState<number | null | undefined>(props.wallet === null ? null : undefined);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   useEffect(() => {
     if (props.wallet === null) return;
-    fundingFee(props.wallet, sats).then(
-      (f) => setFee(`~${btc(f)} BTC`),
-      () => setFee('unknown'),
-    );
+    fundingFee(props.wallet, sats).then(setFee, () => setFee(null));
   }, [props.wallet, sats]);
+  const c = costs(offer, sats, fee ?? null);
+  /** "~" on a figure that counts the lock fee: an estimate. */
+  const est = fee != null ? '~' : '';
   const start = () => {
     setStarting(true);
     setError(null);
@@ -48,17 +50,37 @@ export function Review(props: {
           {btc(sats)} BTC
         </Row>
         <Row label="You get" strong>
-          {nex(nexFor(sats, offer.quote.price))} NEX
+          {nex(c.receive)} NEX
         </Row>
-        <Row label="Price">1 NEX = {btc(offer.quote.price)} BTC</Row>
-        <Row label="Network fee">{fee}</Row>
         <Row label="To">
           <code class="break">{props.nexAddress}</code>
         </Row>
       </div>
+      <div class="label">Costs</div>
+      <div class="rows" data-testid="costs">
+        <Row label="Swap amount">{sat(c.amount)}</Row>
+        <Row label="Bitcoin fee to lock it">{fee === undefined ? '…' : fee === null ? 'unknown' : `~${sat(fee)}`}</Row>
+        <Row label="Nexus fee to claim the NEX">
+          {nex(c.claimFee)} NEX (~{sat(c.claimFeeSats)})
+        </Row>
+        <Row label="Total from your wallet" strong>
+          {est}
+          {sat(c.pay)}
+        </Row>
+        <Row label="Offer price">{sat(c.price)} a NEX</Row>
+        <Row label="Your price with fees" strong>
+          {c.effective === null ? 'no NEX: fees take it all' : `${est}${sat(c.effective)} a NEX`}
+        </Row>
+        <Row label="Fees" strong>
+          {est}
+          {percent(c.feeShare)} of what you pay
+        </Row>
+      </div>
+      {fee === null && <span class="small muted">Not counting the Bitcoin fee to lock: it is priced once you have a wallet.</span>}
       <span class="small muted">
-        If the seller vanishes, your BTC is back in your wallet in {refundAfter(offer)}. Keep this page open for the
-        refund: nothing refunds while it is closed.
+        If the swap fails, {sat(c.refunded)} comes back to your wallet in {refundAfter(offer)}: cancel and refund
+        each pay a {sat(offer.template.btc_fee)} Bitcoin fee from it, and the lock fee is spent. Keep this page open
+        for the refund: nothing refunds while it is closed.
       </span>
       <div class="box strong-border small">Nexus is young; confirmations are cheap to fake today. Swap small amounts.</div>
       {error !== null && (

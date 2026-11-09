@@ -5,7 +5,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { MemoryStore, Wallet, Buyer } from 'lattice-swap-driver';
 import { Locks, until } from '../vendor/lattice-swap/web/driver/test/fakes.js';
 import { App } from '../src/app';
-import { btc } from '../src/format';
+import { nex } from '../src/format';
+import { sat } from '../src/costs';
 import { call, Chain, confirm, deposit, driverOf, esplora, nexus, posted, POLICY, serve, servers, signedOffer, world, type World } from './world';
 import { buildConfig } from '../src/config';
 import { listOffers } from '../src/offers';
@@ -24,7 +25,7 @@ async function startSwap(w: World, amount = '0.01') {
   click('Swap');
   await screen.findByRole('heading', { name: 'Review swap' }, WAIT);
   // A fresh browser: no key made to price the fee, only once the swap starts.
-  expect(screen.getByText('Network fee').nextSibling?.textContent).toBe('unknown');
+  expect(screen.getByText('Bitcoin fee to lock it').nextSibling?.textContent).toBe('unknown');
   expect(await w.store.get('wallet')).toBeNull();
   click('Start swap');
   await screen.findByRole('heading', { name: 'Fund your wallet' }, WAIT);
@@ -273,7 +274,7 @@ describe('a swap through the page', () => {
     click('Swap');
     await screen.findByRole('heading', { name: 'Review swap' }, WAIT);
     const { need } = await wallet.need(1_000_000);
-    await waitFor(() => expect(screen.getByText('Network fee').nextSibling?.textContent).toBe(`~${btc(need - 1_000_000)} BTC`), WAIT);
+    await waitFor(() => expect(screen.getByText('Bitcoin fee to lock it').nextSibling?.textContent).toBe(`~${sat(need - 1_000_000)}`), WAIT);
   });
 
   test('a resume that fails is tried again on the poll', async () => {
@@ -337,7 +338,9 @@ describe('a swap through the page', () => {
     await screen.findByText(/best of 1/, {}, WAIT);
     expect(screen.getByText(/1 NEX = 0\.02000000 BTC/)).toBeTruthy();
     fireEvent.input(screen.getByLabelText('You pay'), { target: { value: '0.01' } });
-    expect(screen.getByTestId('quote').textContent).toBe('0.5');
+    // 0.5 NEX locked, less the claim's Nexus fee.
+    const { nex_fee } = call('decodeOffer', w.offer).template;
+    expect(screen.getByTestId('quote').textContent).toBe(nex(500_000 - nex_fee));
   });
 
   test('withdraws the whole balance when no swap runs', async () => {
