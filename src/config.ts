@@ -72,6 +72,15 @@ function setting(network: string, name: Setting, publicUrl: string): string {
   return own === null || sameServer(own, publicUrl) ? publicUrl : own;
 }
 
+/** The policy `Buyer.prepare` takes for `btcAmount` sat at `price`: the
+ * build's bounds, and `test_btc_for_mainnet_nex` on any network but
+ * Bitcoin's, so the signet build takes mainnet NEX for its test coins, as
+ * its swaps trade on mainnet's Nexus. Never on Bitcoin's: there it is
+ * false, whatever the bounds say. */
+export function policyFor(config: AppConfig, btcAmount: number, price: number) {
+  return { ...config.bounds, btc_amount: btcAmount, price, test_btc_for_mainnet_nex: config.network !== 'bitcoin' };
+}
+
 export function buildConfig(): AppConfig {
   const env = import.meta.env;
   const network = env.VITE_NETWORK || 'bitcoin';

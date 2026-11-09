@@ -2,13 +2,14 @@
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { MemoryStore, Wallet, Buyer, lockFee } from 'lattice-swap-driver';
+import { DEFAULTS, MemoryStore, Wallet, Buyer, lockFee } from 'lattice-swap-driver';
+import { wasm } from 'lattice-swap-driver/wasm.js';
 import { Locks, until } from '../vendor/lattice-swap/web/driver/test/fakes.js';
-import { App } from '../src/app';
+import { App, readable } from '../src/app';
 import { nex, parseBtc } from '../src/format';
 import { about, costs, percent, sat } from '../src/costs';
 import { call, Chain, confirm, deposit, driverOf, esplora, nexus, posted, POLICY, serve, servers, signedOffer, world, type World } from './world';
-import { buildConfig } from '../src/config';
+import { buildConfig, policyFor } from '../src/config';
 import { listOffers } from '../src/offers';
 
 const WAIT = { timeout: 20_000 };
@@ -373,6 +374,50 @@ describe('a swap through the page', () => {
   });
 });
 
+describe('test coins for mainnet NEX', () => {
+  /** The test offer as a seller on `network` offers mainnet NEX. */
+  const mainnetNex = (w: World, network: string) => {
+    const base = JSON.parse(w.offer);
+    base.btc_network = network;
+    base.template.nexus_genesis = DEFAULTS.nexusGenesis;
+    return call('decodeOffer', signedOffer(JSON.stringify(base), JSON.stringify(base.quote)));
+  };
+  /** Why the engine refuses `offer` on `network` under `policy`, or null. */
+  const refusal = (offer: unknown, network: string, policy: unknown): string | null =>
+    wasm.checkOffer(JSON.stringify({ offer, policy, network, nexus_genesis: DEFAULTS.nexusGenesis, fee_estimate: null, min_relay_fee: 0 })) ?? null;
+
+  test('the signet build opts in; mainnet never does, whatever its bounds say', async () => {
+    const w = await world();
+    const signet = policyFor({ ...w.config, network: 'signet' }, POLICY.btc_amount, POLICY.price);
+    expect(signet.test_btc_for_mainnet_nex).toBe(true);
+    const bounds = { ...w.config.bounds, test_btc_for_mainnet_nex: 1 };
+    const mainnet = policyFor({ ...w.config, network: 'bitcoin', bounds }, POLICY.btc_amount, POLICY.price);
+    expect(mainnet.test_btc_for_mainnet_nex).toBe(false);
+    expect(mainnet).toMatchObject({ ...w.config.bounds, btc_amount: POLICY.btc_amount, price: POLICY.price });
+
+    // As the engine judges it: mainnet NEX for signet BTC is taken only
+    // under the opt-in.
+    const offer = mainnetNex(w, 'signet');
+    expect(refusal(offer, 'signet', signet)).toBeNull();
+    const refused = refusal(offer, 'signet', { ...signet, test_btc_for_mainnet_nex: false });
+    expect(refused).toMatch(/^refused: mainnet NEX for signet BTC/);
+    expect(readable(refused!)).toBe('Refused: this offer trades real NEX for signet BTC, which is worth nothing.');
+    expect(readable('refused: anything else')).toBe('refused: anything else');
+  });
+
+  test('the page hands the driver the opt-in on a test network', async () => {
+    const w = await world();
+    const prepare = vi.spyOn(Buyer, 'prepare');
+    try {
+      await startSwap(w);
+      const policy = expect.objectContaining({ ...w.config.bounds, test_btc_for_mainnet_nex: true });
+      expect(prepare).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ policy }));
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+});
+
 describe('restore', () => {
   /** A swap run by the driver alone until its lock is funded, and its
    * recovery file. */
@@ -401,7 +446,10 @@ describe('restore', () => {
     tab(/^Settings/);
     upload(file);
     await screen.findByText('Lock your BTC', {}, WAIT);
-    expect(screen.getByRole('heading', { name: /0\.01000000 BTC → 0\.5 NEX/ })).toBeTruthy();
+    // The NEX that arrives, as Review's "You get": the lock less the claim's fee.
+    const get = nex(costs(call('decodeOffer', w.offer), sats('0.01'), null).receive);
+    expect(get).toBe('0.4999');
+    expect(screen.getByRole('heading', { name: `0.01000000 BTC → ${get} NEX` })).toBeTruthy();
     tab(/^Wallet/);
     expect(screen.getByText(address)).toBeTruthy();
   });

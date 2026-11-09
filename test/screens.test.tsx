@@ -32,6 +32,7 @@ function status(over: Partial<Status> = {}): Status {
     btc_amount: 1_000_000,
     price: 2_000_000,
     nex_amount: 500_000,
+    nex_fee: 0,
     btc_confirmations: 3,
     nex_confirmations: 2,
     nexAddress: 'bafynexaddress',
@@ -121,6 +122,17 @@ describe('progress', () => {
     expect(screen.getByRole('heading').textContent).toBe('0.00030000 BTC → 12.345678 NEX');
     expect(screen.getByText('bafynexaddress')).toBeTruthy();
     expect(current()).toMatch(/12\.345678 NEX is in your address · /);
+  });
+
+  test('the NEX shown is what arrives: the lock less the claim’s fee, as Review’s "You get"', () => {
+    progress(status({ step: 'received', nex_amount: 500_000, nex_fee: 100, confirmations: { funding: 3, lockSpend: 1, cancelSpend: null, nexLock: 1 } }));
+    expect(screen.getByRole('heading').textContent).toBe('0.01000000 BTC → 0.4999 NEX');
+    expect(current()).toMatch(/^✓NEX received0\.4999 NEX is in your address · 1 Nexus confirmation\.$/);
+    cleanup();
+    // A fee that takes all the lock leaves nothing, as Review says.
+    progress(status({ step: 'done', outcome: 'swapped', nex_amount: 100, nex_fee: 100 }));
+    expect(screen.getByRole('heading').textContent).toBe('0.01000000 BTC → 0 NEX');
+    expect(current()).toMatch(/^✓NEX received0 NEX is in your address · /);
   });
 
   test('the recovery file is asked for once it covers the lock, until downloaded', () => {

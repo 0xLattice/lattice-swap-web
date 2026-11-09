@@ -388,6 +388,8 @@ impl World {
                 .args(["--nexus-url", &self.nexus.url, "--nexus-cookie"])
                 .arg(&self.nexus_cookie)
                 .args(["--nexus-genesis", &self.nexus_genesis])
+                // The node may follow mainnet's genesis, on regtest.
+                .arg("--test-btc-for-mainnet-nex")
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap(),
@@ -577,6 +579,13 @@ fn bounds(world: &World, max_t1: u16) -> Value {
     })
 }
 
+/// `base` units as the page shows NEX (`nex` in src/format.ts): six
+/// places, trailing zeros dropped.
+fn nex(base: u64) -> String {
+    let text = format!("{}.{:06}", base / 1_000_000, base % 1_000_000);
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
 const DEADLINE: Duration = Duration::from_secs(900);
 
 /// The page takes the offer, funded from the address it shows, and swaps:
@@ -627,16 +636,17 @@ fn the_page_swaps() {
             "NEX received"
         ]
     );
-    // "1 NEX is in your address · N Nexus confirmations.": N rises, to
-    // "3+" once done.
+    // "X NEX is in your address · N Nexus confirmations.", X the NEX that
+    // arrives, the lock less the claim's fee: N rises, to "3+" once done.
+    let arrived = format!(
+        "{} NEX is in your address · ",
+        nex(NEX_AMOUNT - world.nex_fee)
+    );
     let depths: Vec<String> = page
         .details("NEX received")
         .iter()
         .map(|detail| {
-            assert!(
-                detail.starts_with("1 NEX is in your address · "),
-                "{detail}"
-            );
+            assert!(detail.starts_with(&arrived), "{detail}");
             detail
                 .split(" · ")
                 .nth(1)

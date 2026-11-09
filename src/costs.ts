@@ -40,11 +40,17 @@ export interface Costs {
   refunded: number;
 }
 
+/** The NEX that reaches the buyer, base units: the seller's lock,
+ * `nexAmount`, less the claim's `nexFee`; none if the fee takes it all. */
+export function received(nexAmount: number | bigint, nexFee: number): bigint {
+  const locked = BigInt(nexAmount);
+  return locked > BigInt(nexFee) ? locked - BigInt(nexFee) : 0n;
+}
+
 export function costs(offer: Offer, amount: number, lockFee: number | null): Costs {
   const { price } = offer.quote;
   const { btc_fee, nex_fee } = offer.template;
-  const locked = nexFor(amount, price);
-  const receive = locked > BigInt(nex_fee) ? locked - BigInt(nex_fee) : 0n;
+  const receive = received(nexFor(amount, price), nex_fee);
   const pay = amount + (lockFee ?? 0);
   const worth = (Number(receive) * price) / BASE;
   const refundFees = 2 * btc_fee;
