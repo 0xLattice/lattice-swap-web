@@ -29,3 +29,14 @@ export const checkEsplora = (url: string, network: string, fetch: Fetch = pageFe
   new Esplora(url, fetch).checkNetwork(network);
 export const checkNexusNode = (url: string, genesis: string, fetch: Fetch = pageFetch): Promise<void> =>
   checkNexus(new Nexus(url, fetch), genesis);
+
+/** The lock's Bitcoin fee for `amount` sat, priced before any wallet
+ * exists: what `Wallet#need` asks above the amount of a wallet with one
+ * output to spend, at the rate `Wallet#feeRate` funds at (the Esplora's
+ * 6-block estimate, at least 1 sat/vB). */
+export async function lockFee(url: string, amount: number, fetch: Fetch = pageFetch): Promise<number> {
+  const estimate: number | null = await new Esplora(url, fetch).feeRate(6);
+  const rate = Math.max(1, Math.ceil(estimate ?? 1));
+  const { need } = call('walletNeed', { utxos: [], amount, fee_rate: rate }) as { need: number };
+  return need - amount;
+}
