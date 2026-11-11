@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { checkEsplora, checkNexusNode, DEFAULTS, offers } from 'lattice-swap-driver';
-import { sameServer, saveSetting, type AppConfig, type Setting } from '../config';
+import { isRelayUrl, sameServer, saveSetting, type AppConfig, type Setting } from '../config';
 import { bounded, host } from '../format';
 
 /** What a check of a server found: null while it runs. */
@@ -233,7 +233,7 @@ export function Settings({
               class="link"
               aria-label={`Remove ${url}`}
               disabled={saving}
-              onClick={() => setRelays(relays.filter((r) => r !== url))}
+              onClick={() => setRelays(relays.filter((r) => !sameServer(r, url)))}
             >
               Remove
             </button>
@@ -245,6 +245,8 @@ export function Settings({
           class="secondary"
           disabled={saving || relay.trim() === ''}
           onClick={() => {
+            if (!isRelayUrl(relay)) return setRefused(`Not added: ${relay.trim()} is not a relay's URL (https://…)`);
+            setRefused(null);
             if (!relays.some((url) => sameServer(url, relay))) setRelays([...relays, relay.trim()]);
             setRelay('');
           }}

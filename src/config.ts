@@ -73,18 +73,35 @@ function setting(network: string, name: Setting, publicUrl: string): string {
   return own === null || sameServer(own, publicUrl) ? publicUrl : own;
 }
 
+/** Whether `url` can be a relay's: an https URL, or http on a page not
+ * served over https, whose browser fetches no plain http. */
+export function isRelayUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url.trim());
+    return protocol === 'https:' || (protocol === 'http:' && location.protocol !== 'https:');
+  } catch {
+    return false;
+  }
+}
+
 /** The relays set, kept as a JSON list, or the build's, `publicRelays`,
- * if none are or the list kept is not one. */
+ * if none are or the list kept is not one. Of a list kept, only relay
+ * URLs, each server once. */
 function relaySetting(network: string, publicRelays: string[]): string[] {
   const own = stored(network, 'relays');
   if (own === null) return publicRelays;
+  let list: unknown;
   try {
-    const list: unknown = JSON.parse(own);
-    if (Array.isArray(list) && list.every((url) => typeof url === 'string')) return list;
+    list = JSON.parse(own);
   } catch {
-    // Not a list: the build's.
+    return publicRelays;
   }
-  return publicRelays;
+  if (!Array.isArray(list)) return publicRelays;
+  const relays: string[] = [];
+  for (const url of list) {
+    if (typeof url === 'string' && isRelayUrl(url) && !relays.some((kept) => sameServer(kept, url))) relays.push(url.trim());
+  }
+  return relays;
 }
 
 /** The policy `Buyer.prepare` takes for `btcAmount` sat at `price`: the

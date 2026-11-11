@@ -27,7 +27,7 @@ import {
   type World,
 } from './world';
 import { buildConfig, policyFor } from '../src/config';
-import { listOffers } from '../src/offers';
+import { listOffers, MAX_OFFERS } from '../src/offers';
 
 const WAIT = { timeout: 20_000 };
 const sats = (amount: string) => parseBtc(amount)!;
@@ -747,6 +747,21 @@ describe('settings', () => {
     vi.unstubAllEnvs();
   });
 
+  test('a relay list kept holds only relay URLs, each server once; one not a URL is not added', async () => {
+    vi.stubGlobal('localStorage', store);
+    vi.stubEnv('VITE_NETWORK', 'regtest');
+    kept.set('lattice-swap:regtest:relays', JSON.stringify(['https://a.example', 'HTTPS://A.example/', 'ftp://b.example', 'not a url', 7, 'http://c.example']));
+    expect(buildConfig().relays).toEqual(['https://a.example', 'http://c.example']);
+    vi.unstubAllEnvs();
+
+    const w = await world();
+    await settings(w);
+    set('Relays', 'ftp://b.example');
+    click('Add relay');
+    expect(screen.getByText("Not added: ftp://b.example is not a relay's URL (https://…)")).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Remove ftp://b.example' })).toBeNull();
+  });
+
   test('a browser that keeps no settings saves nothing, says so, and does not reload', async () => {
     const w = await world();
     const own = await server(nexus());
@@ -788,6 +803,32 @@ describe('several relays', () => {
     } finally {
       answer();
     }
+  });
+
+  test('a relay listing without end has only its first entries read', async () => {
+    const w = await world();
+    const [relay] = w.config.relays;
+    w.listed.unshift(...Array<string>(MAX_OFFERS - 1).fill('{}'));
+    expect((await listOffers(relay, 'regtest', 'genesis')).map((l) => l.text)).toEqual([w.offer]);
+    w.listed.unshift('{}');
+    expect(await listOffers(relay, 'regtest', 'genesis')).toEqual([]);
+  });
+
+  test('an earlier refresh answered last does not undo a later one', async () => {
+    const w = await world();
+    // The first read held until the second has answered, with none.
+    let first = () => {};
+    let reads = 0;
+    const late = await serve(() => (++reads === 1 ? new Promise((resolve) => (first = () => resolve([200, [JSON.parse(naming(w.offer, late.url))]]))) : [200, []]));
+    servers.push(late);
+    render(<App config={{ ...w.config, relays: [late.url] }} />);
+    await until(() => reads === 1);
+    tab(/^Offers/);
+    await screen.findByText('No offers on the relays right now.', {}, WAIT);
+    first();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(document.querySelector('table')).toBeNull();
+    expect(screen.getByText('No offers on the relays right now.')).toBeTruthy();
   });
 
   test('an offer is taken through the relay it is listed on', async () => {

@@ -59,6 +59,8 @@ export function App({ config }: { config: AppConfig }) {
   const [error, setError] = useState<string | null>(null);
   const [evictable, setEvictable] = useState(false);
   const run = useRef<AbortController | null>(null);
+  /** The latest refresh of the offers: only its answers are shown. */
+  const refreshes = useRef(0);
 
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
   const driverConfig = useMemo(
@@ -188,23 +190,27 @@ export function App({ config }: { config: AppConfig }) {
 
   /** Reads each relay's offers, shown as each answers: one slow or
    * failing holds back none of the others'. One that fails keeps the
-   * offers it listed last. */
+   * offers it listed last. An answer to an earlier refresh than the
+   * latest is dropped: it is older than what the latest shows. */
   async function refreshOffers() {
+    const refresh = ++refreshes.current;
+    const latest = () => refresh === refreshes.current;
     await Promise.all(
       config.relays.map(async (relay) => {
         try {
           const listed = await listOffers(relay, config.network, genesis);
+          if (!latest()) return;
           setOffers((was) => {
             const failed = { ...was.failed };
             delete failed[relay];
             return { ...was, list: was.list.filter((l) => l.relay !== relay).concat(listed).sort(byPrice), failed };
           });
         } catch (e) {
-          setOffers((was) => ({ ...was, failed: { ...was.failed, [relay]: (e as Error).message } }));
+          if (latest()) setOffers((was) => ({ ...was, failed: { ...was.failed, [relay]: (e as Error).message } }));
         }
       }),
     );
-    setOffers((was) => ({ ...was, loaded: true }));
+    if (latest()) setOffers((was) => ({ ...was, loaded: true }));
   }
 
   useEffect(() => {
