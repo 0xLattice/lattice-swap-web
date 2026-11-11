@@ -6,6 +6,13 @@ import { bounded, btc, nex, parseBtc, refundAfter } from '../format';
 import type { Balance, Listed } from '../types';
 import { Row } from './ui';
 
+/** Selfhold, the Lattice wallet extension, gives pages `window.lattice`. */
+type Selfhold = { isLatticeWallet?: boolean; connect: () => Promise<string> };
+const selfhold = () => {
+  const wallet = (window as { lattice?: Selfhold }).lattice;
+  return wallet?.isLatticeWallet ? wallet : null;
+};
+
 export function NoRelay() {
   return (
     <div role="status" class="box strong-border">
@@ -123,6 +130,19 @@ export function SwapForm(props: {
             onInput={(e) => props.setNexAddress(e.currentTarget.value)}
           />
           {address !== '' && !validAddress && <span class="small error">Not a Nexus address</span>}
+          {selfhold() !== null && (
+            <button
+              type="button"
+              class="link small muted"
+              onClick={() =>
+                selfhold()!
+                  .connect()
+                  .then(props.setNexAddress, (e: Error) => setError(e.message))
+              }
+            >
+              Use my Selfhold address
+            </button>
+          )}
         </div>
       </div>
       {error !== null && (
