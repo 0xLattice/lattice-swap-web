@@ -393,6 +393,42 @@ describe('swap', () => {
     expect(screen.getByTestId('quote').textContent === '0').toBe(!inRange);
   });
 
+  test('with Selfhold installed, its address fills the NEX address', async () => {
+    const connect = vi.fn().mockResolvedValue('bafyselfhold');
+    Object.defineProperty(window, 'lattice', { value: { isLatticeWallet: true, connect }, configurable: true });
+    const setNexAddress = vi.fn();
+    try {
+      render(
+        <SwapForm
+          relay="https://relay.example"
+          offers={{ list: [listed], error: null, loaded: true }}
+          offer={listed}
+          pickGone={false}
+          onRepick={vi.fn()}
+          amount="0.01"
+          setAmount={vi.fn()}
+          nexAddress=""
+          setNexAddress={setNexAddress}
+          balance={null}
+          onWallet={vi.fn()}
+          onReview={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Use my Selfhold address' }));
+      await waitFor(() => expect(setNexAddress).toHaveBeenCalledWith('bafyselfhold'));
+      connect.mockRejectedValue(new Error('Declined'));
+      fireEvent.click(screen.getByRole('button', { name: 'Use my Selfhold address' }));
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Declined'));
+    } finally {
+      delete (window as { lattice?: unknown }).lattice;
+    }
+  });
+
+  test('without Selfhold there is no Selfhold button', () => {
+    form('0.01');
+    expect(screen.queryByRole('button', { name: 'Use my Selfhold address' })).toBeNull();
+  });
+
   test('a pick no longer listed says so and asks for another', () => {
     form('0.01', { offer: null, pickGone: true });
     expect(screen.getByRole('alert').textContent).toMatch(/^The offer you picked is gone/);
