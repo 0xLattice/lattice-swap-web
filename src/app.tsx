@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { Buyer, DEFAULTS, IndexedDBStore, lockFee, Wallet } from 'lattice-swap-driver';
 import { policyFor, type AppConfig } from './config';
 import { bounded, btc, parseBtc } from './format';
-import { listOffers, offerFor } from './offers';
+import { byPrice, listOffers, offerFor } from './offers';
 import type { Balance, Listed, Status } from './types';
 import { download } from './download';
 import { SwapForm } from './screens/swap';
@@ -37,7 +37,9 @@ export function readable(message: string): string {
 
 export interface OffersState {
   list: Listed[];
-  error: string | null;
+  /** Each relay whose offers could not be read, and why. */
+  failed: Record<string, string>;
+  /** Every relay has answered, or failed, at least once. */
   loaded: boolean;
 }
 
@@ -49,7 +51,7 @@ export function App({ config }: { config: AppConfig }) {
   const [buyer, setBuyer] = useState<Buyer | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [runEnded, setRunEnded] = useState(false);
-  const [offers, setOffers] = useState<OffersState>({ list: [], error: null, loaded: false });
+  const [offers, setOffers] = useState<OffersState>({ list: [], failed: {}, loaded: false });
   const [chosen, setChosen] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [nexAddress, setNexAddress] = useState('');
@@ -184,13 +186,25 @@ export function App({ config }: { config: AppConfig }) {
     };
   }, []);
 
+  /** Reads each relay's offers, shown as each answers: one slow or
+   * failing holds back none of the others'. One that fails keeps the
+   * offers it listed last. */
   async function refreshOffers() {
-    if (config.relay === null) return;
-    try {
-      setOffers({ list: await listOffers(config.relay, config.network, genesis), error: null, loaded: true });
-    } catch (e) {
-      setOffers((was) => ({ ...was, error: (e as Error).message, loaded: true }));
-    }
+    await Promise.all(
+      config.relays.map(async (relay) => {
+        try {
+          const listed = await listOffers(relay, config.network, genesis);
+          setOffers((was) => {
+            const failed = { ...was.failed };
+            delete failed[relay];
+            return { ...was, list: was.list.filter((l) => l.relay !== relay).concat(listed).sort(byPrice), failed };
+          });
+        } catch (e) {
+          setOffers((was) => ({ ...was, failed: { ...was.failed, [relay]: (e as Error).message } }));
+        }
+      }),
+    );
+    setOffers((was) => ({ ...was, loaded: true }));
   }
 
   useEffect(() => {
@@ -327,7 +341,7 @@ export function App({ config }: { config: AppConfig }) {
   else if (screen === 'swap')
     body = (
       <SwapForm
-        relay={config.relay}
+        relays={config.relays}
         offers={offers}
         offer={offer}
         pickGone={pickGone}
@@ -369,7 +383,7 @@ export function App({ config }: { config: AppConfig }) {
   else if (screen === 'offers')
     body = (
       <Offers
-        relay={config.relay}
+        relays={config.relays}
         offers={offers}
         onPick={(text) => {
           setChosen(text);

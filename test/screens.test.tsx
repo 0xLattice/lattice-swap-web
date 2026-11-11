@@ -334,20 +334,29 @@ describe('offers', () => {
       relay: 'https://relay.example',
       seller: 's',
     },
+    relay: 'https://relay.example',
   });
 
   test('price per NEX, range and refund time; the pick goes back to the swap', () => {
     const onPick = vi.fn();
-    render(<Offers relay="https://relay.example" offers={{ list: [offer(2_000_000)], error: null, loaded: true }} onPick={onPick} />);
+    render(<Offers relays={['https://relay.example']} offers={{ list: [offer(2_000_000)], failed: {}, loaded: true }} onPick={onPick} />);
     const cells = [...document.querySelectorAll('tbody td')].map((td) => td.textContent);
-    expect(cells.slice(0, 3)).toEqual(['0.02000000 BTC', '0.00010000 – 0.01000000 BTC', 'BTC back in ~2 days with this page open']);
+    expect(cells.slice(0, 4)).toEqual(['0.02000000 BTC', '0.00010000 – 0.01000000 BTC', 'BTC back in ~2 days with this page open', 'relay.example']);
     fireEvent.click(screen.getByRole('button', { name: 'Swap' }));
     expect(onPick).toHaveBeenCalledWith('2000000');
     expect(screen.getByRole('link', { name: 'Set up a seller →' }).getAttribute('href')).toMatch(/lattice-swap#swapping-through-a-relay$/);
   });
 
+  test('a relay whose offers could not be read is named, and the others’ are listed', () => {
+    const failed = { 'https://down.example': 'https://down.example/offers: 503' };
+    render(<Offers relays={['https://relay.example', 'https://down.example']} offers={{ list: [offer(2_000_000)], failed, loaded: true }} onPick={vi.fn()} />);
+    expect(screen.getByRole('alert').textContent).toBe('Could not read the offers of down.example: https://down.example/offers: 503');
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(screen.queryByText('No offers on the relays right now.')).toBeNull();
+  });
+
   test('no relay configured', () => {
-    render(<Offers relay={null} offers={{ list: [], error: null, loaded: false }} onPick={vi.fn()} />);
+    render(<Offers relays={[]} offers={{ list: [], failed: {}, loaded: false }} onPick={vi.fn()} />);
     expect(screen.getByText('No relay configured')).toBeTruthy();
     expect(document.querySelector('table')).toBeNull();
   });
@@ -363,12 +372,13 @@ describe('swap', () => {
       relay: 'https://relay.example',
       seller: 's',
     },
+    relay: 'https://relay.example',
   };
   const form = (amount: string, over: { offer?: typeof listed | null; pickGone?: boolean } = {}) =>
     render(
       <SwapForm
-        relay="https://relay.example"
-        offers={{ list: [listed], error: null, loaded: true }}
+        relays={['https://relay.example']}
+        offers={{ list: [listed], failed: {}, loaded: true }}
         offer={over.offer === undefined ? listed : over.offer}
         pickGone={over.pickGone ?? false}
         onRepick={vi.fn()}
@@ -400,8 +410,8 @@ describe('swap', () => {
     try {
       render(
         <SwapForm
-          relay="https://relay.example"
-          offers={{ list: [listed], error: null, loaded: true }}
+          relays={['https://relay.example']}
+          offers={{ list: [listed], failed: {}, loaded: true }}
           offer={listed}
           pickGone={false}
           onRepick={vi.fn()}
@@ -432,7 +442,7 @@ describe('swap', () => {
   test('a pick no longer listed says so and asks for another', () => {
     form('0.01', { offer: null, pickGone: true });
     expect(screen.getByRole('alert').textContent).toMatch(/^The offer you picked is gone/);
-    expect(screen.queryByText('No offers on the relay right now.')).toBeNull();
+    expect(screen.queryByText('No offers on the relays right now.')).toBeNull();
     expect((screen.getByRole('button', { name: 'Swap' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole('button', { name: 'Pick another offer' })).toBeTruthy();
   });
@@ -491,8 +501,8 @@ describe('settings', () => {
     network: 'regtest',
     esplora: 'https://esplora.example',
     nexus: 'https://nexus.example',
-    defaults: { esplora: 'https://esplora.example', nexus: 'https://public-nexus.example' },
-    relay: null,
+    defaults: { esplora: 'https://esplora.example', nexus: 'https://public-nexus.example', relays: [] },
+    relays: [],
     // No server answers: each check finds it unreachable.
     driver: { fetch: () => Promise.reject(new Error('offline')) },
   };

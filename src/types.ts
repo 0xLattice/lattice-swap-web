@@ -66,11 +66,12 @@ export interface Offer {
   seller: string;
 }
 
-/** An offer on the board: its text, which `Buyer.prepare` takes, and what
- * it says. */
+/** An offer on the board: its text, which `Buyer.prepare` takes, what
+ * it says, and the relay it is listed on. */
 export interface Listed {
   text: string;
   offer: Offer;
+  relay: string;
 }
 
 export interface Balance {

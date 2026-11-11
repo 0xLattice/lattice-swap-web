@@ -26,17 +26,28 @@ export const closeServers = () => servers.splice(0).forEach((server) => server.c
  * the CLI's defaults. */
 const BOUNDS = Object.fromEntries(Object.entries(POLICY).filter(([name]) => name !== 'btc_amount' && name !== 'price'));
 
+/** A relay listing `listed`, offers as text, read as each is asked for. */
+export async function relayOf(listed: string[]) {
+  const board = await serve((_method: string, path: string) =>
+    path === '/offers' ? [200, listed.map((text) => JSON.parse(text))] : undefined,
+  );
+  servers.push(board);
+  return board;
+}
+
+/** `offer` naming `relay`, which its seller does not sign. */
+export const naming = (offer: string, relay: string) => JSON.stringify({ ...JSON.parse(offer), relay });
+
 export async function world({ relay = true, store = new MemoryStore(), extra = {} as Record<string, unknown> } = {}) {
   const chain = new Chain();
   const a = await esplora(chain);
   const node = await nexus();
-  const offer = testOffer('http://relay.invalid');
-  /** The offers the relay lists, as text. */
-  const listed = [offer];
-  const board = await serve((_method: string, path: string) =>
-    path === '/offers' ? [200, listed.map((text) => JSON.parse(text))] : undefined,
-  );
-  servers.push(a, node, board);
+  /** The offers the relay lists, as text: the test offer, naming it. */
+  const listed: string[] = [];
+  const board = await relayOf(listed);
+  const offer = testOffer(board.url);
+  listed.push(offer);
+  servers.push(a, node);
   const w = {
     chain,
     a,
@@ -52,9 +63,9 @@ export async function world({ relay = true, store = new MemoryStore(), extra = {
     esplora: a.url,
     nexus: node.url,
     // The test's servers are the build's: public.
-    defaults: { esplora: a.url, nexus: node.url },
+    defaults: { esplora: a.url, nexus: node.url, relays: relay ? [board.url] : [] },
     nexusGenesis: 'genesis',
-    relay: relay ? board.url : null,
+    relays: relay ? [board.url] : [],
     bounds: BOUNDS,
     driver: {
       store,

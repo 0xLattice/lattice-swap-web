@@ -1,16 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
-import { checkEsplora, checkNexusNode, DEFAULTS } from 'lattice-swap-driver';
+import { checkEsplora, checkNexusNode, DEFAULTS, offers } from 'lattice-swap-driver';
 import { sameServer, saveSetting, type AppConfig, type Setting } from '../config';
-import { bounded } from '../format';
-
-/** `url`'s host, or `url` if it is none. */
-function host(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
+import { bounded, host } from '../format';
 
 /** What a check of a server found: null while it runs. */
 type Checked = { ok: boolean; text: string } | null;
@@ -19,6 +10,9 @@ type Checked = { ok: boolean; text: string } | null;
 export const CHECK_TIMEOUT = 15_000;
 
 type Fetch = typeof globalThis.fetch;
+
+/** Whether `a` and `b` name the same servers, in order. */
+const sameServers = (a: string[], b: string[]) => a.length === b.length && a.every((url, i) => sameServer(url, b[i]));
 
 export function Settings({
   config,
@@ -33,6 +27,8 @@ export function Settings({
 }) {
   const [esplora, setEsplora] = useState(config.esplora);
   const [nexus, setNexus] = useState(config.nexus);
+  const [relays, setRelays] = useState(config.relays);
+  const [relay, setRelay] = useState('');
   const [restore, setRestore] = useState<{ ok: boolean; text: string } | null>(null);
   const [checked, setChecked] = useState<Record<Setting, Checked>>({ esplora: null, nexus: null });
   const [saving, setSaving] = useState(false);
@@ -43,17 +39,20 @@ export function Settings({
   const [closed] = useState(() => new AbortController());
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
   const pageFetch = config.driver?.fetch as Fetch | undefined;
-  const drivers: Record<Setting, (url: string, fetch: Fetch) => Promise<void>> = {
+  const drivers: Record<Setting | 'relays', (url: string, fetch: Fetch) => Promise<void>> = {
     esplora: (url, fetch) => checkEsplora(url, config.network, fetch),
     nexus: (url, fetch) => checkNexusNode(url, genesis, fetch),
+    // A relay is one whose offers can be read.
+    relays: (url, fetch) => offers(url, fetch).then(() => {}),
   };
-  const changed = !sameServer(esplora, config.esplora) || !sameServer(nexus, config.nexus);
+  const changed =
+    !sameServer(esplora, config.esplora) || !sameServer(nexus, config.nexus) || !sameServers(relays, config.relays);
 
   /** The driver's check of `url` for `name`, given up after
    * CHECK_TIMEOUT or once Settings closes: one a server could not answer
    * is unreachable; one it answered and the driver refused, refused with
    * the driver's reason. */
-  async function check(name: Setting, url: string): Promise<{ ok: boolean; text: string }> {
+  async function check(name: Setting | 'relays', url: string): Promise<{ ok: boolean; text: string }> {
     // The page is https, and a browser fetches no plain http from it.
     if (location.protocol === 'https:' && !/^https:\/\//i.test(url.trim())) {
       return { ok: false, text: 'refused: must be an https URL' };
@@ -111,10 +110,10 @@ export function Settings({
   }, []);
 
   /** Saves `next`, an empty or the public URL for the public server,
-   * once the driver's checks pass for each new server of your own, and
-   * reloads onto them; saves nothing if a check refuses one, or if
-   * Settings closes first. */
-  const save = async (next: Record<Setting, string>) => {
+   * once the driver's checks pass for each new server of your own and each
+   * relay added, and reloads onto them; saves nothing if a check refuses
+   * one, or if Settings closes first. */
+  const save = async (next: Record<Setting, string> & { relays: string[] }) => {
     setSaving(true);
     setRefused(null);
     const own = (name: Setting) => {
@@ -132,8 +131,22 @@ export function Settings({
         return;
       }
     }
+    for (const url of next.relays) {
+      if (config.relays.some((was) => sameServer(was, url))) continue;
+      const result = await check('relays', url);
+      if (closed.signal.aborted) return;
+      if (!result.ok) {
+        setRefused(`Not saved: ${url}: ${result.text}`);
+        setSaving(false);
+        return;
+      }
+    }
+    const ownRelays = sameServers(next.relays, config.defaults.relays) ? '' : JSON.stringify(next.relays);
     // A host's own node is not the buyer's to set.
-    const kept = saveSetting(config.network, 'esplora', own('esplora')) && (config.ownNode || saveSetting(config.network, 'nexus', own('nexus')));
+    const kept =
+      saveSetting(config.network, 'esplora', own('esplora')) &&
+      (config.ownNode || saveSetting(config.network, 'nexus', own('nexus'))) &&
+      saveSetting(config.network, 'relays', ownRelays);
     if (!kept) {
       setRefused('Not saved: this browser keeps no settings (private mode?)');
       setSaving(false);
@@ -161,7 +174,7 @@ export function Settings({
         {isPublic ? (
           <span class="small muted">{trust(host(config[name]))}</span>
         ) : (
-          <button type="button" class="link" disabled={saving} onClick={() => save({ esplora: config.esplora, nexus: config.nexus, [name]: '' })}>
+          <button type="button" class="link" disabled={saving} onClick={() => save({ esplora: config.esplora, nexus: config.nexus, relays: config.relays, [name]: '' })}>
             Use the public {of} ({host(config.defaults[name])})
           </button>
         )}
@@ -207,19 +220,52 @@ export function Settings({
         be an https URL{config.ownNode ? '' : ": a Nexus node's public read port, started with --public-submit"}.
       </span>
       {runs && <span class="small muted">A swap is running: it carries on with the servers you save.</span>}
+      <div class="field top-rule">
+        <label for="relay" class="label">
+          Relays
+        </label>
+        {relays.length === 0 && <span class="small muted">None: no offers are listed.</span>}
+        {relays.map((url) => (
+          <div key={url} class="row">
+            <span>{url}</span>
+            <button
+              type="button"
+              class="link"
+              aria-label={`Remove ${url}`}
+              disabled={saving}
+              onClick={() => setRelays(relays.filter((r) => r !== url))}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <input id="relay" class="text" placeholder="https://" value={relay} onInput={(e) => setRelay(e.currentTarget.value)} />
+        <button
+          type="button"
+          class="secondary"
+          disabled={saving || relay.trim() === ''}
+          onClick={() => {
+            if (!relays.some((url) => sameServer(url, relay))) setRelays([...relays, relay.trim()]);
+            setRelay('');
+          }}
+        >
+          Add relay
+        </button>
+        <span class="small muted">
+          Offers are listed from each relay, and each is taken through the relay it is listed on. A relay can delay a
+          swap, which ends in a refund, but cannot change it.
+        </span>
+      </div>
       {refused !== null && (
         <p role="alert" class="error">
           {bounded(refused)}
         </p>
       )}
       {changed && (
-        <button type="button" class="primary" disabled={saving} onClick={() => save({ esplora, nexus })}>
+        <button type="button" class="primary" disabled={saving} onClick={() => save({ esplora, nexus, relays })}>
           {saving ? 'Checking…' : 'Save and reload'}
         </button>
       )}
-      <div class="field top-rule">
-        <span class="small muted">{config.relay === null ? 'No relay configured.' : `Relay: ${config.relay}`}</span>
-      </div>
       <div class="field top-rule">
         <label for="restore" class="secondary file-button">
           Restore from file

@@ -56,6 +56,15 @@ export function refundAfter(offer: Offer): string {
   return duration((1 + t1 + 2 * btc_confirmations) * BLOCK_MS);
 }
 
+/** `url`'s host, or `url` if it is none. */
+export function host(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
 /** What a server or the driver said, cut to a length a page can show. */
 export function bounded(text: string, max = 240): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
