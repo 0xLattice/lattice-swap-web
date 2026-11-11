@@ -8,9 +8,26 @@ import { Locks, until } from '../vendor/lattice-swap/web/driver/test/fakes.js';
 import { App, readable } from '../src/app';
 import { nex, parseBtc } from '../src/format';
 import { about, costs, percent, sat } from '../src/costs';
-import { call, Chain, confirm, deposit, driverOf, esplora, nexus, posted, POLICY, serve, servers, signedOffer, world, type World } from './world';
+import {
+  call,
+  Chain,
+  confirm,
+  deposit,
+  driverOf,
+  esplora,
+  naming,
+  nexus,
+  posted,
+  POLICY,
+  relayOf,
+  serve,
+  servers,
+  signedOffer,
+  world,
+  type World,
+} from './world';
 import { buildConfig, policyFor } from '../src/config';
-import { listOffers } from '../src/offers';
+import { listOffers, MAX_OFFERS } from '../src/offers';
 
 const WAIT = { timeout: 20_000 };
 const sats = (amount: string) => parseBtc(amount)!;
@@ -350,7 +367,7 @@ describe('a swap through the page', () => {
     expect(call('decodeOffer', zero).quote.price).toBe(0);
     expect(call('decodeOffer', huge).quote.price).toBe(1);
     w.listed.unshift(zero, huge);
-    expect((await listOffers(w.config.relay!, 'regtest', 'genesis')).map((l) => l.text)).toEqual([w.offer]);
+    expect((await listOffers(w.config.relays[0], 'regtest', 'genesis')).map((l) => l.text)).toEqual([w.offer]);
     render(<App config={w.config} />);
     await screen.findByText(/best of 1/, {}, WAIT);
     expect(screen.getByText(/1 NEX = 0\.02000000 BTC/)).toBeTruthy();
@@ -687,6 +704,64 @@ describe('settings', () => {
     vi.unstubAllEnvs();
   });
 
+  test('a relay added is checked first, and kept; the list is read back on load, and may be empty', async () => {
+    const w = await world();
+    const [relay] = w.config.relays;
+    const added = await relayOf([]);
+    const down = await server(serve(() => [503, 'down']));
+    await settings(w);
+    set('Relays', down.url);
+    click('Add relay');
+    click('Save and reload');
+    await screen.findByText(`Not saved: ${down.url}: Unreachable: ${down.url}/offers: 503`, {}, WAIT);
+    click(`Remove ${down.url}`);
+    set('Relays', added.url);
+    click('Add relay');
+    click('Save and reload');
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce(), WAIT);
+    expect(saved('relays')).toBe(JSON.stringify([relay, added.url]));
+    vi.stubEnv('VITE_NETWORK', 'regtest');
+    vi.stubEnv('VITE_RELAY', relay);
+    expect(buildConfig().relays).toEqual([relay, added.url]);
+    cleanup();
+
+    // None at all is kept as none, not the build's.
+    await settings(w, { ...w.config, relays: [relay, added.url] });
+    click(`Remove ${relay}`);
+    click(`Remove ${added.url}`);
+    expect(screen.getByText('None: no offers are listed.')).toBeTruthy();
+    click('Save and reload');
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(2), WAIT);
+    expect(saved('relays')).toBe('[]');
+    expect(buildConfig().relays).toEqual([]);
+    cleanup();
+
+    // The build's alone again: nothing kept.
+    await settings(w, { ...w.config, relays: [] });
+    set('Relays', relay);
+    click('Add relay');
+    click('Save and reload');
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(3), WAIT);
+    expect(saved('relays')).toBeNull();
+    expect(buildConfig().relays).toEqual([relay]);
+    vi.unstubAllEnvs();
+  });
+
+  test('a relay list kept holds only relay URLs, each server once; one not a URL is not added', async () => {
+    vi.stubGlobal('localStorage', store);
+    vi.stubEnv('VITE_NETWORK', 'regtest');
+    kept.set('lattice-swap:regtest:relays', JSON.stringify(['https://a.example', 'HTTPS://A.example/', 'ftp://b.example', 'not a url', 7, 'http://c.example']));
+    expect(buildConfig().relays).toEqual(['https://a.example', 'http://c.example']);
+    vi.unstubAllEnvs();
+
+    const w = await world();
+    await settings(w);
+    set('Relays', 'ftp://b.example');
+    click('Add relay');
+    expect(screen.getByText("Not added: ftp://b.example is not a relay's URL (https://…)")).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Remove ftp://b.example' })).toBeNull();
+  });
+
   test('a browser that keeps no settings saves nothing, says so, and does not reload', async () => {
     const w = await world();
     const own = await server(nexus());
@@ -700,6 +775,93 @@ describe('settings', () => {
     await screen.findByText('Not saved: this browser keeps no settings (private mode?)', {}, WAIT);
     expect(reload).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Save and reload' }).hasAttribute('disabled')).toBe(false);
+  });
+});
+
+describe('several relays', () => {
+  /** Another seller's offer, cheaper than the test offer: 0.01 BTC a NEX. */
+  const cheaper = (offer: string) => signedOffer(offer, '{"price":1000000,"min_btc_amount":10000,"max_btc_amount":1000000}');
+  const host = (url: string) => new URL(url).host;
+  /** Each row's price and relay. */
+  const rows = () => [...document.querySelectorAll('tbody tr')].map((tr) => [(tr as HTMLTableRowElement).cells[0].textContent, (tr as HTMLTableRowElement).cells[3].textContent]);
+
+  test('every relay’s offers, merged best first; one down or slow holds back none, and the one down is named', async () => {
+    const w = await world();
+    const listed: string[] = [];
+    const b = await relayOf(listed);
+    // A copy of the test offer on b names w's relay: not b's to list.
+    listed.push(cheaper(naming(w.offer, b.url)), w.offer);
+    let answer = () => {};
+    const slow = await serve(() => new Promise((resolve) => (answer = () => resolve([200, []]))));
+    const down = await serve(() => [503, 'down']);
+    servers.push(slow, down);
+    try {
+      render(<App config={{ ...w.config, relays: [slow.url, w.config.relays[0], down.url, b.url] }} />);
+      tab(/^Offers/);
+      await screen.findByText(`Could not read the offers of ${host(down.url)}: ${down.url}/offers: 503`, {}, WAIT);
+      await waitFor(() => expect(rows()).toEqual([['0.01000000 BTC', host(b.url)], ['0.02000000 BTC', host(w.config.relays[0])]]), WAIT);
+    } finally {
+      answer();
+    }
+  });
+
+  test('a relay listing without end has only its first entries read', async () => {
+    const w = await world();
+    const [relay] = w.config.relays;
+    w.listed.unshift(...Array<string>(MAX_OFFERS - 1).fill('{}'));
+    expect((await listOffers(relay, 'regtest', 'genesis')).map((l) => l.text)).toEqual([w.offer]);
+    w.listed.unshift('{}');
+    expect(await listOffers(relay, 'regtest', 'genesis')).toEqual([]);
+  });
+
+  test('an earlier refresh answered last does not undo a later one', async () => {
+    const w = await world();
+    // The first read held until the second has answered, with none.
+    let first = () => {};
+    let reads = 0;
+    const late = await serve(() => (++reads === 1 ? new Promise((resolve) => (first = () => resolve([200, [JSON.parse(naming(w.offer, late.url))]]))) : [200, []]));
+    servers.push(late);
+    render(<App config={{ ...w.config, relays: [late.url] }} />);
+    await until(() => reads === 1);
+    tab(/^Offers/);
+    await screen.findByText('No offers on the relays right now.', {}, WAIT);
+    first();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(document.querySelector('table')).toBeNull();
+    expect(screen.getByText('No offers on the relays right now.')).toBeTruthy();
+  });
+
+  test('an offer is taken through the relay it is listed on', async () => {
+    const w = await world();
+    const listed: string[] = [];
+    const b = await relayOf(listed);
+    // The test offer on b too, naming b, under one cheaper on w's relay.
+    listed.push(naming(w.offer, b.url));
+    w.listed.push(cheaper(w.offer));
+    const through: string[] = [];
+    const driver = {
+      ...w.config.driver,
+      openSession: (offer: { relay: string }, ...rest: unknown[]) => {
+        through.push(offer.relay);
+        return w.seller.open(offer, ...rest);
+      },
+    };
+    render(<App config={{ ...w.config, relays: [w.config.relays[0], b.url], driver }} />);
+    tab(/^Offers/);
+    await waitFor(() => expect(rows()).toHaveLength(3), WAIT);
+    const row = [...document.querySelectorAll('tbody tr')].find((tr) => tr.textContent!.includes(host(b.url)))!;
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Swap' }));
+    fireEvent.click(await screen.findByText(/your pick/, {}, WAIT));
+    expect(screen.getByText('Relay').nextSibling?.textContent).toBe(host(b.url));
+    fireEvent.input(screen.getByLabelText('You pay'), { target: { value: '0.01' } });
+    fireEvent.input(screen.getByLabelText('Send NEX to'), { target: { value: w.nexAddress } });
+    click('Swap');
+    await screen.findByRole('heading', { name: 'Review swap' }, WAIT);
+    click('Start swap');
+    await screen.findByRole('heading', { name: 'Fund your wallet' }, WAIT);
+    deposit(w, (await Wallet.open(driverOf(w))).address as string, 1_100_000);
+    await until(() => through.length > 0, 20_000);
+    expect(through).toEqual([b.url]);
   });
 });
 

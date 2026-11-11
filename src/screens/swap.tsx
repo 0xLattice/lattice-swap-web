@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import { isCid } from 'lattice-swap-driver';
 import type { OffersState } from '../app';
 import { costs } from '../costs';
-import { bounded, btc, nex, parseBtc, refundAfter } from '../format';
+import { bounded, btc, host, nex, parseBtc, refundAfter } from '../format';
 import type { Balance, Listed } from '../types';
 import { Row } from './ui';
 
@@ -17,13 +17,26 @@ export function NoRelay() {
   return (
     <div role="status" class="box strong-border">
       <span class="strong">No relay configured</span>
-      <span class="small muted">This build lists no offers: it names no swap relay to read them from.</span>
+      <span class="small muted">No offers are listed: add a swap relay to read them from in Settings.</span>
     </div>
   );
 }
 
+/** Each relay whose offers could not be read: the others' are listed. */
+export function RelayFailures({ failed }: { failed: Record<string, string> }) {
+  return (
+    <>
+      {Object.entries(failed).map(([relay, error]) => (
+        <p key={relay} role="alert" class="error">
+          Could not read the offers of {host(relay)}: {bounded(error)}
+        </p>
+      ))}
+    </>
+  );
+}
+
 export function SwapForm(props: {
-  relay: string | null;
+  relays: string[];
   offers: OffersState;
   offer: Listed | null;
   /** The offer picked is no longer listed: the buyer picks again. */
@@ -47,12 +60,8 @@ export function SwapForm(props: {
   const validAddress = address !== '' && isCid(address);
   return (
     <section class="narrow">
-      {props.relay === null && <NoRelay />}
-      {props.relay !== null && offers.error !== null && (
-        <p role="alert" class="error">
-          Could not read the relay's offers: {bounded(offers.error)}
-        </p>
-      )}
+      {props.relays.length === 0 && <NoRelay />}
+      <RelayFailures failed={offers.failed} />
       {props.pickGone && (
         <div role="alert" class="box strong-border">
           <span class="strong">The offer you picked is gone</span>
@@ -62,9 +71,9 @@ export function SwapForm(props: {
           </button>
         </div>
       )}
-      {props.relay !== null && offers.loaded && offers.error === null && !props.pickGone && offer === null && (
+      {props.relays.length > 0 && offers.loaded && Object.keys(offers.failed).length === 0 && !props.pickGone && offer === null && (
         <div role="status" class="box">
-          No offers on the relay right now.
+          No offers on the relays right now.
         </div>
       )}
       <div class="card">
@@ -114,6 +123,9 @@ export function SwapForm(props: {
                 {btc(offer.offer.quote.min_btc_amount)} – {btc(offer.offer.quote.max_btc_amount)} BTC
               </Row>
               <Row label="If it doesn’t finish">BTC back in {refundAfter(offer.offer)} with this page open</Row>
+              <Row label="Relay">
+                <span class="small muted">{host(offer.relay)}</span>
+              </Row>
             </div>
           )}
         </div>
