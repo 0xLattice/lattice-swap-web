@@ -14,6 +14,26 @@ export { safe };
  * one it refuses. */
 export const decodeOffer = (text: string): Offer => call('decodeOffer', text);
 
+/** A relay directory listing under way, as swap-wasm's `listRelays` and
+ * `giveRelayNode` give it: the CIDs of the nodes it still `wants`, the
+ * next first, and the `relays` read so far, all of them once it wants
+ * none. */
+export interface RelayListing {
+  state: unknown;
+  wants: string[];
+  relays: { account: string; url: string }[];
+}
+
+/** A listing of the relays the relay directory lists in the block `block`
+ * names. */
+export const listRelays = (block: string): RelayListing => call('listRelays', block);
+
+/** `listing` given `bytes` as the node `cid` names; throws on bytes that
+ * are not that node's. Called on the wasm itself: `call` would send the
+ * bytes as JSON. */
+export const giveRelayNode = (listing: RelayListing, cid: string, bytes: Uint8Array): RelayListing =>
+  JSON.parse(wasm.giveRelayNode(JSON.stringify(listing.state), cid, bytes));
+
 /** Whether `address` is a Nexus address. */
 export const isCid = (address: string): boolean => wasm.isCid(address);
 

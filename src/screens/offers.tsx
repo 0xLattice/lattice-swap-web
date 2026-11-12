@@ -1,16 +1,19 @@
 import type { OffersState } from '../app';
 import { btc, host, refundAfter } from '../format';
-import { NoRelay, RelayFailures } from './swap';
+import { directoryFailed, NoRelay, RelayFailures } from './swap';
 
 /** Where a seller learns to list offers: `lattice-swap offer --relay`. */
 const SELL_DOCS = 'https://github.com/0xLattice/lattice-swap#swapping-through-a-relay';
 
 export function Offers({
   relays,
+  directory,
   offers,
   onPick,
 }: {
   relays: string[];
+  /** A relay directory is set: more relays may be found on it. */
+  directory?: boolean;
   offers: OffersState;
   onPick: (text: string) => void;
 }) {
@@ -20,9 +23,9 @@ export function Offers({
         <h1>Offers</h1>
         <span class="small muted">Sellers online now · best price first</span>
       </div>
-      {relays.length === 0 && <NoRelay />}
-      <RelayFailures failed={offers.failed} />
-      {relays.length > 0 && offers.loaded && Object.keys(offers.failed).length === 0 && offers.list.length === 0 && (
+      {relays.length === 0 && (!directory || directoryFailed(offers)) && <NoRelay />}
+      <RelayFailures offers={offers} />
+      {(relays.length > 0 || directory) && offers.loaded && Object.keys(offers.failed).length === 0 && offers.list.length === 0 && (
         <div role="status" class="box">
           No offers on the relays right now.
         </div>
@@ -49,7 +52,10 @@ export function Offers({
                     {btc(offer.quote.min_btc_amount)} – {btc(offer.quote.max_btc_amount)} BTC
                   </td>
                   <td>BTC back in {refundAfter(offer)} with this page open</td>
-                  <td class="muted">{host(relay)}</td>
+                  <td class="muted">
+                    {host(relay)}
+                    {offers.found.includes(relay) && ' · via directory'}
+                  </td>
                   <td class="action">
                     <button type="button" class="secondary" onClick={() => onPick(text)}>
                       Swap

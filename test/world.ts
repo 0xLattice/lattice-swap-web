@@ -14,7 +14,7 @@ import {
   serve,
   testOffer,
 } from '../vendor/lattice-swap/web/driver/test/fakes.js';
-import { generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import type { AppConfig } from '../src/config';
 
 export { call, Chain, esplora, nexus, parseTx, POLICY, serve };
@@ -115,4 +115,120 @@ export function signedOffer(base: string, quote: string): string {
   const signature = sign(null, Buffer.from(signed), privateKey).toString('hex');
   const rest = JSON.stringify({ ...offer, quote: undefined, seller, signature }).slice(1);
   return `{"quote":${quote},${rest}`;
+}
+
+/** `value` as CBOR: text, unsigned integers, arrays, and objects as maps
+ * with text keys, as a relay directory's nodes hold them. */
+function cbor(value: unknown): number[] {
+  const head = (major: number, n: number) =>
+    n < 24
+      ? [(major << 5) | n]
+      : n < 0x100
+        ? [(major << 5) | 24, n]
+        : n < 0x10000
+          ? [(major << 5) | 25, n >> 8, n & 0xff]
+          : [(major << 5) | 26, n >>> 24, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+  if (typeof value === 'number') return head(0, value);
+  if (typeof value === 'string') {
+    const bytes = [...Buffer.from(value)];
+    return [...head(3, bytes.length), ...bytes];
+  }
+  if (Array.isArray(value)) return [...head(4, value.length), ...value.flatMap(cbor)];
+  const entries = Object.entries(value as object);
+  return [...head(5, entries.length), ...entries.flatMap(([k, v]) => [...cbor(k), ...cbor(v)])];
+}
+
+/** The CID of `bytes` as Lattice spells one: CIDv1 DAG-CBOR SHA-256,
+ * base32. */
+function cidOf(bytes: Uint8Array): string {
+  const binary = [0x01, 0x71, 0x12, 0x20, ...createHash('sha256').update(bytes).digest()];
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
+  let bits = 0;
+  let held = 0;
+  let out = 'b';
+  for (const byte of binary) {
+    held = (held << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(held >> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  return bits > 0 ? out + alphabet[(held << (5 - bits)) & 31] : out;
+}
+
+/** A relay directory chain's nodes by CID, as a node hosting it serves
+ * them, built as cashew's trie files entries (swap::relay_dir's tests). */
+export class DirectoryChain {
+  nodes = new Map<string, Uint8Array>();
+  /** The nodes each node links to, by CID. */
+  below = new Map<string, string[]>();
+
+  put(node: object, links: string[] = []): string {
+    const bytes = Uint8Array.from(cbor(node));
+    const cid = cidOf(bytes);
+    this.nodes.set(cid, bytes);
+    this.below.set(cid, links);
+    return cid;
+  }
+
+  /** The children of a node over `entries`, keys relative to it. */
+  children(entries: [string, string][]): { children: object[]; links: string[] } {
+    const groups = new Map<string, [string, string][]>();
+    for (const entry of entries) groups.set(entry[0][0], [...(groups.get(entry[0][0]) ?? []), entry]);
+    const links = [...groups.values()].map((group) => this.node(group));
+    return { children: [...groups.keys()].map((key, i) => ({ key, value: { rawCID: links[i] } })), links };
+  }
+
+  /** The node over `entries`, which share a first character. */
+  node(entries: [string, string][]): string {
+    let prefix = entries[0][0];
+    for (const [key] of entries) while (!key.startsWith(prefix)) prefix = prefix.slice(0, -1);
+    const node: Record<string, unknown> = { prefix };
+    const rest: [string, string][] = [];
+    for (const [key, value] of entries) {
+      if (key === prefix) node.value = value;
+      else rest.push([key.slice(prefix.length), value]);
+    }
+    const { children, links } = this.children(rest);
+    node.children = children;
+    return this.put(node, links);
+  }
+
+  /** A block whose general state holds `entries`: the chain's tip. */
+  block(entries: [string, string][]): string {
+    const { children, links } = this.children(entries);
+    return this.commit(children, links);
+  }
+
+  /** A block whose general state's root has `children`, linking `links`. */
+  commit(children: object[], links: string[]): string {
+    const root = this.put({ count: 0, children }, links);
+    const state = this.put({ generalState: { rawCID: root } }, [root]);
+    return this.put({ postState: { rawCID: state }, height: 1 }, [state]);
+  }
+
+  /** The node's answer to `url`, a node hosting the chain `chain` whose
+   * tip is `tip`: its chain info, or Volumes each holding only the node it
+   * is named by, one asked for alone or at most `perBatch` of those asked
+   * for together, each CID served noted in `asked`. */
+  answer(url: string, tip: string, { chain = ['Nexus', 'testnet', 'swap-relays'], asked = [] as string[], perBatch = Infinity } = {}): Response {
+    const { pathname, searchParams } = new URL(url);
+    if (pathname === '/api/chain/info') return Response.json({ chain, height: '1', tipCID: tip });
+    const frame = (name: string, bytes: Uint8Array) => {
+      const head = Buffer.alloc(2 + name.length + 4);
+      head.writeUInt16BE(name.length, 0);
+      head.write(name, 2);
+      head.writeUInt32BE(bytes.length, 2 + name.length);
+      return Buffer.concat([head, bytes]);
+    };
+    const volume = (cid: string) => Buffer.concat([Buffer.from([0, 1]), frame(cid, this.nodes.get(cid)!)]);
+    const cids = pathname === '/volumes' ? searchParams.get('cids')!.split(',') : [decodeURIComponent(pathname.replace(/^\/volumes\//, ''))];
+    // As lattice-node refuses a CID it could not be.
+    if (!cids.every((cid) => /^b[a-z2-7]+$/.test(cid))) return new Response('bad request', { status: 400 });
+    const served = cids.filter((cid) => this.nodes.has(cid)).slice(0, perBatch);
+    asked.push(...served);
+    if (pathname !== '/volumes') return served.length === 0 ? new Response('not found', { status: 404 }) : new Response(volume(served[0]));
+    return new Response(Buffer.concat(served.map((cid) => frame(cid, volume(cid)))));
+  }
 }

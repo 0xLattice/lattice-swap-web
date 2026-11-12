@@ -22,21 +22,33 @@ export function NoRelay() {
   );
 }
 
-/** Each relay whose offers could not be read: the others' are listed. */
-export function RelayFailures({ failed }: { failed: Record<string, string> }) {
+/** Each relay whose offers could not be read: the others' are listed.
+ * And why the relay directory could not be read, or was read in part, if
+ * so: the buyer's own relays are listed without it. */
+export function RelayFailures({ offers }: { offers: OffersState }) {
   return (
     <>
-      {Object.entries(failed).map(([relay, error]) => (
+      {Object.entries(offers.failed).map(([relay, error]) => (
         <p key={relay} role="alert" class="error">
           Could not read the offers of {host(relay)}: {bounded(error)}
         </p>
       ))}
+      {offers.directory !== null && (
+        <p role="status" class="small muted">
+          {bounded(offers.directory)}
+        </p>
+      )}
     </>
   );
 }
 
+/** Whether the relay directory could not be read, so it found no relay. */
+export const directoryFailed = (offers: OffersState) => offers.directory !== null && offers.found.length === 0;
+
 export function SwapForm(props: {
   relays: string[];
+  /** A relay directory is set: more relays may be found on it. */
+  directory?: boolean;
   offers: OffersState;
   offer: Listed | null;
   /** The offer picked is no longer listed: the buyer picks again. */
@@ -60,8 +72,8 @@ export function SwapForm(props: {
   const validAddress = address !== '' && isCid(address);
   return (
     <section class="narrow">
-      {props.relays.length === 0 && <NoRelay />}
-      <RelayFailures failed={offers.failed} />
+      {props.relays.length === 0 && (!props.directory || directoryFailed(offers)) && <NoRelay />}
+      <RelayFailures offers={offers} />
       {props.pickGone && (
         <div role="alert" class="box strong-border">
           <span class="strong">The offer you picked is gone</span>
@@ -71,7 +83,7 @@ export function SwapForm(props: {
           </button>
         </div>
       )}
-      {props.relays.length > 0 && offers.loaded && Object.keys(offers.failed).length === 0 && !props.pickGone && offer === null && (
+      {(props.relays.length > 0 || props.directory) && offers.loaded && Object.keys(offers.failed).length === 0 && !props.pickGone && offer === null && (
         <div role="status" class="box">
           No offers on the relays right now.
         </div>

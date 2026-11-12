@@ -35,8 +35,20 @@ The page shows only what the driver exposes. Each screen follows
   a browser fetches no plain http from it: for a Nexus node, its public read
   port served over https and started with `--public-submit` (the node's
   loopback RPC is not reachable from a page). A running swap carries on
-  with the servers saved, its checks run again as it resumes. And Restore
-  from a recovery file.
+  with the servers saved, its checks run again as it resumes. The relays
+  whose offers are listed: the build's, and any you add. And a relay
+  directory, a node hosting the directory's chain (lattice-swap's
+  `relay-dir`) and the chain's path: up to 16 of the relays it lists at
+  the tip, picked at random, are read after yours, and their offers marked
+  "via directory". The tip is that node's word, so it can hide relays or
+  name useless ones, but not move funds: an offer is signed by its seller
+  and listed only on the relay it names. Its relays are contacted from
+  your browser, so a directory you don't trust can point you at hosts of
+  its choosing. The directory is read in batches (`GET /volumes?cids=`),
+  waiting out a node's rate limit, within 15 seconds; a read cut short
+  keeps the relays listed by then and says so. If it cannot be read, the
+  page says so and lists your relays' offers. A read that failed or was
+  cut short is tried again at most once a minute. And Restore from a recovery file.
 
 Nothing watches a swap while the page is closed. If a swap stalls, come back
 by the cancel time it shows, and keep the page open until the refund
@@ -56,6 +68,13 @@ environment variable of the same name overrides them:
 | `VITE_NEXUS` | `https://lattice-mainnet-read.fly.dev` |
 | `VITE_NEXUS_GENESIS` | the driver's |
 | `VITE_RELAY` | none: the page says no relay is configured |
+| `VITE_RELAY_DIRECTORY` | none: no relay directory is read |
+| `VITE_RELAY_DIRECTORY_CHAIN` | none (signet: `Nexus/testnet/swap-relays`) |
+
+No public node is known to host a relay directory's chain, so neither
+build reads one unless the buyer sets one in Settings; the signet build
+fills in the test directory's chain. Mainnet sets no chain until a mainnet
+directory exists.
 
 `npm run build` writes the mainnet page to `dist/`. `npm run build:signet`
 writes the signet page to `dist-signet/`.

@@ -1,18 +1,21 @@
 // What the page runs against: the build's settings (.env, .env.signet),
-// with the Esplora and Nexus URLs and the relays the buyer set in Settings
-// over them.
+// with the Esplora and Nexus URLs, the relays and the relay directory the
+// buyer set in Settings over them.
 
 export interface AppConfig {
   network: string;
   esplora: string;
   nexus: string;
-  /** The build's own servers, the public ones: what `esplora`, `nexus`
-   * and `relays` are unless the buyer set their own. */
-  defaults: Record<Setting, string> & { relays: string[] };
+  /** The build's own servers, the public ones: what `esplora`, `nexus`,
+   * `relays` and `directory` are unless the buyer set their own. */
+  defaults: Record<Setting, string> & { relays: string[]; directory?: Directory };
   /** The Nexus genesis offers must name; the driver's default if unset. */
   nexusGenesis?: string;
   /** The relays whose offers are listed; none if none is chosen. */
   relays: string[];
+  /** The relay directory more relays are read from; none if unset or its
+   * node is empty. */
+  directory?: Directory;
   /** Bounds on the offer's terms other than the CLI's defaults
    * (`swap::offer::Bounds`), from VITE_BOUNDS, JSON: the signet build
    * takes shallow test terms; the driver's tests use looser ones. */
@@ -30,9 +33,18 @@ export interface AppConfig {
 
 export type Setting = 'esplora' | 'nexus';
 
-const key = (network: string, name: Setting | 'relays') => `lattice-swap:${network}:${name}`;
+/** A relay directory: a node hosting the directory's chain, and the
+ * chain's path, as `Nexus/testnet/swap-relays`. */
+export interface Directory {
+  node: string;
+  chain: string;
+}
 
-function stored(network: string, name: Setting | 'relays'): string | null {
+type Kept = Setting | 'relays' | 'directory';
+
+const key = (network: string, name: Kept) => `lattice-swap:${network}:${name}`;
+
+function stored(network: string, name: Kept): string | null {
   try {
     return localStorage.getItem(key(network, name));
   } catch {
@@ -42,7 +54,7 @@ function stored(network: string, name: Setting | 'relays'): string | null {
 
 /** Keeps `value` for `name`, or drops it when empty: false if the
  * browser keeps no settings. */
-export function saveSetting(network: string, name: Setting | 'relays', value: string): boolean {
+export function saveSetting(network: string, name: Kept, value: string): boolean {
   try {
     if (value.trim() === '') localStorage.removeItem(key(network, name));
     else localStorage.setItem(key(network, name), value.trim());
@@ -104,6 +116,23 @@ function relaySetting(network: string, publicRelays: string[]): string[] {
   return relays;
 }
 
+/** The relay directory set, kept as JSON, or the build's, `publicDirectory`,
+ * if none is or the one kept is not one: a node that is a relay-like URL,
+ * or empty for none. */
+function directorySetting(network: string, publicDirectory: Directory): Directory {
+  const own = stored(network, 'directory');
+  if (own === null) return publicDirectory;
+  let kept: unknown;
+  try {
+    kept = JSON.parse(own);
+  } catch {
+    return publicDirectory;
+  }
+  const { node, chain } = (kept ?? {}) as Record<string, unknown>;
+  if (typeof node !== 'string' || typeof chain !== 'string' || (node !== '' && !isRelayUrl(node))) return publicDirectory;
+  return { node, chain };
+}
+
 /** The policy `Buyer.prepare` takes for `btcAmount` sat at `price`: the
  * build's bounds, and `test_btc_for_mainnet_nex` on any network but
  * Bitcoin's, so the signet build takes mainnet NEX for its test coins, as
@@ -117,13 +146,15 @@ export function buildConfig(): AppConfig {
   const env = import.meta.env;
   const network = env.VITE_NETWORK || 'bitcoin';
   const relays = env.VITE_RELAY ? [env.VITE_RELAY] : [];
+  const directory = { node: env.VITE_RELAY_DIRECTORY ?? '', chain: env.VITE_RELAY_DIRECTORY_CHAIN ?? '' };
   return {
     network,
     esplora: setting(network, 'esplora', env.VITE_ESPLORA),
     nexus: setting(network, 'nexus', env.VITE_NEXUS),
-    defaults: { esplora: env.VITE_ESPLORA, nexus: env.VITE_NEXUS, relays },
+    defaults: { esplora: env.VITE_ESPLORA, nexus: env.VITE_NEXUS, relays, directory },
     nexusGenesis: env.VITE_NEXUS_GENESIS || undefined,
     relays: relaySetting(network, relays),
+    directory: directorySetting(network, directory),
     bounds: env.VITE_BOUNDS ? JSON.parse(env.VITE_BOUNDS) : undefined,
   };
 }
