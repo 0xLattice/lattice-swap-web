@@ -6,6 +6,7 @@ import { Buyer, DEFAULTS, IndexedDBStore, lockFee, Wallet } from 'lattice-swap-d
 import { policyFor, type AppConfig } from './config';
 import { bounded, btc, parseBtc } from './format';
 import { byPrice, listOffers, offerFor } from './offers';
+import { pickFound, readDirectory } from './directory';
 import type { Balance, Listed, Status } from './types';
 import { download } from './download';
 import { SwapForm } from './screens/swap';
@@ -41,6 +42,11 @@ export interface OffersState {
   failed: Record<string, string>;
   /** Every relay has answered, or failed, at least once. */
   loaded: boolean;
+  /** The relays found on the relay directory whose offers are read. */
+  found: string[];
+  /** Why the relay directory could not be read; null if it was, or none
+   * is set. */
+  directory: string | null;
 }
 
 export function App({ config }: { config: AppConfig }) {
@@ -51,7 +57,7 @@ export function App({ config }: { config: AppConfig }) {
   const [buyer, setBuyer] = useState<Buyer | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [runEnded, setRunEnded] = useState(false);
-  const [offers, setOffers] = useState<OffersState>({ list: [], failed: {}, loaded: false });
+  const [offers, setOffers] = useState<OffersState>({ list: [], failed: {}, loaded: false, found: [], directory: null });
   const [chosen, setChosen] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [nexAddress, setNexAddress] = useState('');
@@ -61,6 +67,10 @@ export function App({ config }: { config: AppConfig }) {
   const run = useRef<AbortController | null>(null);
   /** The latest refresh of the offers: only its answers are shown. */
   const refreshes = useRef(0);
+  /** The relays found on the directory, read once a page load: picked
+   * anew each refresh, another pick would leave the last one's offers
+   * listed. A read that fails is tried again on the next refresh. */
+  const found = useRef<Promise<string[]> | null>(null);
 
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
   const driverConfig = useMemo(
@@ -188,28 +198,52 @@ export function App({ config }: { config: AppConfig }) {
     };
   }, []);
 
+  /** The relays found on the directory, if one is set, picked beside the
+   * buyer's own; none if it cannot be read, and why is shown. */
+  function directoryRelays(): Promise<string[]> {
+    const directory = config.directory;
+    if (!directory?.node) return Promise.resolve([]);
+    found.current ??= readDirectory(directory, config.driver?.fetch as typeof fetch | undefined).then(
+      (relays) => {
+        const picked = pickFound(config.relays, relays);
+        setOffers((was) => ({ ...was, found: picked, directory: null }));
+        return picked;
+      },
+      (e: Error) => {
+        found.current = null;
+        setOffers((was) => ({ ...was, directory: e.message }));
+        return [];
+      },
+    );
+    return found.current;
+  }
+
   /** Reads each relay's offers, shown as each answers: one slow or
-   * failing holds back none of the others'. One that fails keeps the
-   * offers it listed last. An answer to an earlier refresh than the
-   * latest is dropped: it is older than what the latest shows. */
+   * failing holds back none of the others'. The buyer's own are read at
+   * once, then those found on the directory, once it is read. One that
+   * fails keeps the offers it listed last, and is named if it is the
+   * buyer's own. An answer to an earlier refresh than the latest is
+   * dropped: it is older than what the latest shows. */
   async function refreshOffers() {
     const refresh = ++refreshes.current;
     const latest = () => refresh === refreshes.current;
-    await Promise.all(
-      config.relays.map(async (relay) => {
-        try {
-          const listed = await listOffers(relay, config.network, genesis);
-          if (!latest()) return;
-          setOffers((was) => {
-            const failed = { ...was.failed };
-            delete failed[relay];
-            return { ...was, list: was.list.filter((l) => l.relay !== relay).concat(listed).sort(byPrice), failed };
-          });
-        } catch (e) {
-          if (latest()) setOffers((was) => ({ ...was, failed: { ...was.failed, [relay]: (e as Error).message } }));
-        }
-      }),
-    );
+    const read = async (relay: string, own: boolean) => {
+      try {
+        const listed = await listOffers(relay, config.network, genesis);
+        if (!latest()) return;
+        setOffers((was) => {
+          const failed = { ...was.failed };
+          delete failed[relay];
+          return { ...was, list: was.list.filter((l) => l.relay !== relay).concat(listed).sort(byPrice), failed };
+        });
+      } catch (e) {
+        if (latest() && own) setOffers((was) => ({ ...was, failed: { ...was.failed, [relay]: (e as Error).message } }));
+      }
+    };
+    await Promise.all([
+      ...config.relays.map((relay) => read(relay, true)),
+      directoryRelays().then((relays) => Promise.all(relays.map((relay) => read(relay, false)))),
+    ]);
     if (latest()) setOffers((was) => ({ ...was, loaded: true }));
   }
 
@@ -348,6 +382,7 @@ export function App({ config }: { config: AppConfig }) {
     body = (
       <SwapForm
         relays={config.relays}
+        directory={!!config.directory?.node}
         offers={offers}
         offer={offer}
         pickGone={pickGone}
@@ -390,6 +425,7 @@ export function App({ config }: { config: AppConfig }) {
     body = (
       <Offers
         relays={config.relays}
+        directory={!!config.directory?.node}
         offers={offers}
         onPick={(text) => {
           setChosen(text);

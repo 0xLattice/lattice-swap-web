@@ -339,7 +339,7 @@ describe('offers', () => {
 
   test('price per NEX, range and refund time; the pick goes back to the swap', () => {
     const onPick = vi.fn();
-    render(<Offers relays={['https://relay.example']} offers={{ list: [offer(2_000_000)], failed: {}, loaded: true }} onPick={onPick} />);
+    render(<Offers relays={['https://relay.example']} offers={{ list: [offer(2_000_000)], failed: {}, loaded: true, found: [], directory: null }} onPick={onPick} />);
     const cells = [...document.querySelectorAll('tbody td')].map((td) => td.textContent);
     expect(cells.slice(0, 4)).toEqual(['0.02000000 BTC', '0.00010000 – 0.01000000 BTC', 'BTC back in ~2 days with this page open', 'relay.example']);
     fireEvent.click(screen.getByRole('button', { name: 'Swap' }));
@@ -349,14 +349,14 @@ describe('offers', () => {
 
   test('a relay whose offers could not be read is named, and the others’ are listed', () => {
     const failed = { 'https://down.example': 'https://down.example/offers: 503' };
-    render(<Offers relays={['https://relay.example', 'https://down.example']} offers={{ list: [offer(2_000_000)], failed, loaded: true }} onPick={vi.fn()} />);
+    render(<Offers relays={['https://relay.example', 'https://down.example']} offers={{ list: [offer(2_000_000)], failed, loaded: true, found: [], directory: null }} onPick={vi.fn()} />);
     expect(screen.getByRole('alert').textContent).toBe('Could not read the offers of down.example: https://down.example/offers: 503');
     expect(document.querySelectorAll('tbody tr')).toHaveLength(1);
     expect(screen.queryByText('No offers on the relays right now.')).toBeNull();
   });
 
   test('no relay configured', () => {
-    render(<Offers relays={[]} offers={{ list: [], failed: {}, loaded: false }} onPick={vi.fn()} />);
+    render(<Offers relays={[]} offers={{ list: [], failed: {}, loaded: false, found: [], directory: null }} onPick={vi.fn()} />);
     expect(screen.getByText('No relay configured')).toBeTruthy();
     expect(document.querySelector('table')).toBeNull();
   });
@@ -378,7 +378,7 @@ describe('swap', () => {
     render(
       <SwapForm
         relays={['https://relay.example']}
-        offers={{ list: [listed], failed: {}, loaded: true }}
+        offers={{ list: [listed], failed: {}, loaded: true, found: [], directory: null }}
         offer={over.offer === undefined ? listed : over.offer}
         pickGone={over.pickGone ?? false}
         onRepick={vi.fn()}
@@ -411,7 +411,7 @@ describe('swap', () => {
       render(
         <SwapForm
           relays={['https://relay.example']}
-          offers={{ list: [listed], failed: {}, loaded: true }}
+          offers={{ list: [listed], failed: {}, loaded: true, found: [], directory: null }}
           offer={listed}
           pickGone={false}
           onRepick={vi.fn()}

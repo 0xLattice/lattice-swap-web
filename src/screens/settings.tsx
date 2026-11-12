@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { checkEsplora, checkNexusNode, DEFAULTS, offers } from 'lattice-swap-driver';
-import { isRelayUrl, sameServer, saveSetting, type AppConfig, type Setting } from '../config';
+import { isRelayUrl, sameServer, saveSetting, type AppConfig, type Directory, type Setting } from '../config';
+import { MAX_DIRECTORY_RELAYS, readDirectory } from '../directory';
 import { bounded, host } from '../format';
 
 /** What a check of a server found: null while it runs. */
@@ -13,6 +14,14 @@ type Fetch = typeof globalThis.fetch;
 
 /** Whether `a` and `b` name the same servers, in order. */
 const sameServers = (a: string[], b: string[]) => a.length === b.length && a.every((url, i) => sameServer(url, b[i]));
+
+/** No directory: one whose node is empty. */
+const NO_DIRECTORY: Directory = { node: '', chain: '' };
+
+/** Whether `a` and `b` are the same directory: none, or the same chain on
+ * the same node. */
+const sameDirectory = (a: Directory, b: Directory) =>
+  a.node.trim() === '' ? b.node.trim() === '' : sameServer(a.node, b.node) && a.chain.trim() === b.chain.trim();
 
 export function Settings({
   config,
@@ -29,6 +38,9 @@ export function Settings({
   const [nexus, setNexus] = useState(config.nexus);
   const [relays, setRelays] = useState(config.relays);
   const [relay, setRelay] = useState('');
+  const directory = config.directory ?? NO_DIRECTORY;
+  const [directoryNode, setDirectoryNode] = useState(directory.node);
+  const [directoryChain, setDirectoryChain] = useState(directory.chain);
   const [restore, setRestore] = useState<{ ok: boolean; text: string } | null>(null);
   const [checked, setChecked] = useState<Record<Setting, Checked>>({ esplora: null, nexus: null });
   const [saving, setSaving] = useState(false);
@@ -39,20 +51,25 @@ export function Settings({
   const [closed] = useState(() => new AbortController());
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
   const pageFetch = config.driver?.fetch as Fetch | undefined;
-  const drivers: Record<Setting | 'relays', (url: string, fetch: Fetch) => Promise<void>> = {
+  const drivers: Record<Setting | 'relays' | 'directory', (url: string, fetch: Fetch) => Promise<void>> = {
     esplora: (url, fetch) => checkEsplora(url, config.network, fetch),
     nexus: (url, fetch) => checkNexusNode(url, genesis, fetch),
     // A relay is one whose offers can be read.
     relays: (url, fetch) => offers(url, fetch).then(() => {}),
+    // A directory is one whose relays can be read, of the chain typed.
+    directory: (url, fetch) => readDirectory({ node: url, chain: directoryChain.trim() }, fetch).then(() => {}),
   };
   const changed =
-    !sameServer(esplora, config.esplora) || !sameServer(nexus, config.nexus) || !sameServers(relays, config.relays);
+    !sameServer(esplora, config.esplora) ||
+    !sameServer(nexus, config.nexus) ||
+    !sameServers(relays, config.relays) ||
+    !sameDirectory({ node: directoryNode, chain: directoryChain }, directory);
 
   /** The driver's check of `url` for `name`, given up after
    * CHECK_TIMEOUT or once Settings closes: one a server could not answer
    * is unreachable; one it answered and the driver refused, refused with
    * the driver's reason. */
-  async function check(name: Setting | 'relays', url: string): Promise<{ ok: boolean; text: string }> {
+  async function check(name: Setting | 'relays' | 'directory', url: string): Promise<{ ok: boolean; text: string }> {
     // The page is https, and a browser fetches no plain http from it.
     if (location.protocol === 'https:' && !/^https:\/\//i.test(url.trim())) {
       return { ok: false, text: 'refused: must be an https URL' };
@@ -110,10 +127,10 @@ export function Settings({
   }, []);
 
   /** Saves `next`, an empty or the public URL for the public server,
-   * once the driver's checks pass for each new server of your own and each
-   * relay added, and reloads onto them; saves nothing if a check refuses
+   * once the driver's checks pass for each new server of your own, each
+   * relay added and a relay directory set, and reloads onto them; saves nothing if a check refuses
    * one, or if Settings closes first. */
-  const save = async (next: Record<Setting, string> & { relays: string[] }) => {
+  const save = async (next: Record<Setting, string> & { relays: string[]; directory: Directory }) => {
     setSaving(true);
     setRefused(null);
     const own = (name: Setting) => {
@@ -141,12 +158,33 @@ export function Settings({
         return;
       }
     }
+    const nextDirectory = { node: next.directory.node.trim(), chain: next.directory.chain.trim() };
+    if (!sameDirectory(nextDirectory, directory)) {
+      const result =
+        nextDirectory.node === ''
+          ? { ok: true, text: '' }
+          : !isRelayUrl(nextDirectory.node)
+            ? { ok: false, text: `${nextDirectory.node} is not a node's URL (https://…)` }
+            : !/^[^/]+(\/[^/]+)*$/.test(nextDirectory.chain)
+              ? { ok: false, text: 'name the chain of the directory, as Nexus/testnet/swap-relays' }
+              : await check('directory', nextDirectory.node);
+      if (closed.signal.aborted) return;
+      if (!result.ok) {
+        setRefused(`Not saved: relay directory: ${result.text}`);
+        setSaving(false);
+        return;
+      }
+    }
     const ownRelays = sameServers(next.relays, config.defaults.relays) ? '' : JSON.stringify(next.relays);
+    const ownDirectory = sameDirectory(nextDirectory, config.defaults.directory ?? NO_DIRECTORY)
+      ? ''
+      : JSON.stringify(nextDirectory.node === '' ? NO_DIRECTORY : nextDirectory);
     // A host's own node is not the buyer's to set.
     const kept =
       saveSetting(config.network, 'esplora', own('esplora')) &&
       (config.ownNode || saveSetting(config.network, 'nexus', own('nexus'))) &&
-      saveSetting(config.network, 'relays', ownRelays);
+      saveSetting(config.network, 'relays', ownRelays) &&
+      saveSetting(config.network, 'directory', ownDirectory);
     if (!kept) {
       setRefused('Not saved: this browser keeps no settings (private mode?)');
       setSaving(false);
@@ -174,7 +212,7 @@ export function Settings({
         {isPublic ? (
           <span class="small muted">{trust(host(config[name]))}</span>
         ) : (
-          <button type="button" class="link" disabled={saving} onClick={() => save({ esplora: config.esplora, nexus: config.nexus, relays: config.relays, [name]: '' })}>
+          <button type="button" class="link" disabled={saving} onClick={() => save({ esplora: config.esplora, nexus: config.nexus, relays: config.relays, directory, [name]: '' })}>
             Use the public {of} ({host(config.defaults[name])})
           </button>
         )}
@@ -258,13 +296,33 @@ export function Settings({
           swap, which ends in a refund, but cannot change it.
         </span>
       </div>
+      <div class="field top-rule">
+        <label for="directory" class="label">
+          Relay directory
+        </label>
+        <input
+          id="directory"
+          class="text"
+          placeholder="https://"
+          value={directoryNode}
+          onInput={(e) => setDirectoryNode(e.currentTarget.value)}
+        />
+        <label for="directory-chain" class="small muted">
+          Its chain
+        </label>
+        <input id="directory-chain" class="text" value={directoryChain} onInput={(e) => setDirectoryChain(e.currentTarget.value)} />
+        <span class="small muted">
+          A node hosting the relay directory's chain: up to {MAX_DIRECTORY_RELAYS} of the relays it lists are read beside
+          yours. You trust the node for which relays it lists, not for your funds. Empty for none.
+        </span>
+      </div>
       {refused !== null && (
         <p role="alert" class="error">
           {bounded(refused)}
         </p>
       )}
       {changed && (
-        <button type="button" class="primary" disabled={saving} onClick={() => save({ esplora, nexus, relays })}>
+        <button type="button" class="primary" disabled={saving} onClick={() => save({ esplora, nexus, relays, directory: { node: directoryNode, chain: directoryChain } })}>
           {saving ? 'Checking…' : 'Save and reload'}
         </button>
       )}

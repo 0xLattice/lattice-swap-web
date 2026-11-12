@@ -13,6 +13,7 @@ import {
   Chain,
   confirm,
   deposit,
+  DirectoryChain,
   driverOf,
   esplora,
   naming,
@@ -28,6 +29,7 @@ import {
 } from './world';
 import { buildConfig, policyFor } from '../src/config';
 import { listOffers, MAX_OFFERS } from '../src/offers';
+import { MAX_DIRECTORY_RELAYS, pickFound, readDirectory } from '../src/directory';
 
 const WAIT = { timeout: 20_000 };
 const sats = (amount: string) => parseBtc(amount)!;
@@ -762,6 +764,43 @@ describe('settings', () => {
     expect(screen.queryByRole('button', { name: 'Remove ftp://b.example' })).toBeNull();
   });
 
+  test('a relay directory is read before it is saved, of the chain typed, and read back on load', async () => {
+    const node = 'https://dir.example';
+    const chain = new DirectoryChain();
+    const tip = chain.block([[`relay/${call('newNexKey').address}`, 'https://r.example']]);
+    const realFetch = globalThis.fetch;
+    const w = await world();
+    await settings(w);
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith(node) ? Promise.resolve(chain.answer(String(input), tip)) : realFetch(input, init),
+    );
+    set('Relay directory', node);
+    click('Save and reload');
+    await screen.findByText('Not saved: relay directory: name the chain of the directory, as Nexus/testnet/swap-relays', {}, WAIT);
+    set('Its chain', 'Nexus/other');
+    click('Save and reload');
+    await screen.findByText('Not saved: relay directory: refused: the node answered for another chain than Nexus/other', {}, WAIT);
+    set('Its chain', 'Nexus/testnet/swap-relays');
+    click('Save and reload');
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce(), WAIT);
+    expect(saved('directory')).toBe(JSON.stringify({ node, chain: 'Nexus/testnet/swap-relays' }));
+    vi.stubEnv('VITE_NETWORK', 'regtest');
+    expect(buildConfig().directory).toEqual({ node, chain: 'Nexus/testnet/swap-relays' });
+
+    // Turned off on a build that sets one: kept as none, not the build's.
+    const directory = { node, chain: 'Nexus/testnet/swap-relays' };
+    vi.stubEnv('VITE_RELAY_DIRECTORY', node);
+    vi.stubEnv('VITE_RELAY_DIRECTORY_CHAIN', directory.chain);
+    cleanup();
+    await settings(w, { ...w.config, directory, defaults: { ...w.config.defaults, directory } });
+    set('Relay directory', '');
+    click('Save and reload');
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(2), WAIT);
+    expect(saved('directory')).toBe(JSON.stringify({ node: '', chain: '' }));
+    expect(buildConfig().directory).toEqual({ node: '', chain: '' });
+    vi.unstubAllEnvs();
+  });
+
   test('a browser that keeps no settings saves nothing, says so, and does not reload', async () => {
     const w = await world();
     const own = await server(nexus());
@@ -862,6 +901,99 @@ describe('several relays', () => {
     deposit(w, (await Wallet.open(driverOf(w))).address as string, 1_100_000);
     await until(() => through.length > 0, 20_000);
     expect(through).toEqual([b.url]);
+  });
+
+  describe('found on a relay directory', () => {
+    const DIR = 'https://dir.example';
+    const CHAIN = 'Nexus/testnet/swap-relays';
+    const realFetch = globalThis.fetch;
+    const account = () => call('newNexKey').address as string;
+    /** The page's fetch: the directory's node at DIR answering as
+     * `answer`, each https server of `hosts` at the test server it names,
+     * any other as it is. */
+    function route(answer: (url: string) => Response, hosts: Record<string, string> = {}) {
+      vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith(DIR)) return Promise.resolve(answer(url));
+        const from = Object.keys(hosts).find((h) => url.startsWith(h));
+        return from === undefined ? realFetch(input, init) : realFetch(hosts[from] + url.slice(from.length), init);
+      });
+    }
+    afterEach(() => vi.unstubAllGlobals());
+
+    test('lists the relays at the tip, asking for each node once, in the order the listing wants them', async () => {
+      // Two pairs of accounts, each pair sharing the character past what
+      // every address shares: the trie holds two nodes side by side, each
+      // with children of its own, which only a depth-first read takes
+      // one after the other's children.
+      const by = new Map<string, string[]>();
+      let pairs: string[][] = [];
+      while (pairs.length < 2) {
+        const a = account();
+        by.set(a[7], [...(by.get(a[7]) ?? []), a]);
+        pairs = [...by.values()].filter((group) => group.length >= 2);
+      }
+      const accounts = pairs.flatMap((group) => group.slice(0, 2));
+      const chain = new DirectoryChain();
+      const tip = chain.block(accounts.map((a, i) => [`relay/${a}`, `https://r${i}.example`]));
+      const asked: string[] = [];
+      const relays = await readDirectory({ node: DIR, chain: CHAIN }, async (url) => chain.answer(String(url), tip, undefined, asked));
+      expect(relays.sort()).toEqual(accounts.map((_, i) => `https://r${i}.example/`));
+      expect(asked).toHaveLength(chain.nodes.size);
+      expect(new Set(asked).size).toBe(asked.length);
+      asked.forEach((cid, i) => {
+        const links = chain.below.get(cid)!;
+        if (links.length > 0 && i + 1 < asked.length) expect(links).toContain(asked[i + 1]);
+      });
+    });
+
+    test('a node answering for another chain is refused, and asked nothing more', async () => {
+      const chain = new DirectoryChain();
+      const tip = chain.block([[`relay/${account()}`, 'https://r.example']]);
+      const asked: string[] = [];
+      const read = readDirectory({ node: DIR, chain: CHAIN }, async (url) => chain.answer(String(url), tip, ['Nexus', 'other'], asked));
+      await expect(read).rejects.toThrow(`the node answered for another chain than ${CHAIN}`);
+      expect(asked).toEqual([]);
+    });
+
+    test('found relays are read beside your own: not yours again, each server once, at most the cap', () => {
+      const own = ['https://own.example'];
+      const found = ['https://OWN.example/', 'https://a.example', 'https://a.example/'];
+      for (let i = 0; i < 20; i++) found.push(`https://r${i}.example`);
+      const picked = pickFound(own, found);
+      expect(picked).toHaveLength(MAX_DIRECTORY_RELAYS);
+      expect(new Set(picked).size).toBe(picked.length);
+      expect(picked.some((url) => url.toLowerCase().includes('own.example'))).toBe(false);
+      expect(pickFound(own, found.slice(0, 3))).toEqual(['https://a.example']);
+    });
+
+    test('a found relay’s offers are listed beside your own, as via the directory', async () => {
+      const w = await world();
+      const found = await relayOf([cheaper(naming(w.offer, 'https://found.example'))]);
+      const chain = new DirectoryChain();
+      const tip = chain.block([[`relay/${account()}`, 'https://found.example']]);
+      route((url) => chain.answer(url, tip), { 'https://found.example': found.url });
+      render(<App config={{ ...w.config, directory: { node: DIR, chain: CHAIN } }} />);
+      tab(/^Offers/);
+      await waitFor(
+        () =>
+          expect(rows()).toEqual([
+            ['0.01000000 BTC', 'found.example · via directory'],
+            ['0.02000000 BTC', host(w.config.relays[0])],
+          ]),
+        WAIT,
+      );
+    });
+
+    test('a directory that cannot be read is noted, and your own relays are listed', async () => {
+      const w = await world();
+      route(() => new Response('down', { status: 503 }));
+      render(<App config={{ ...w.config, directory: { node: DIR, chain: CHAIN } }} />);
+      tab(/^Offers/);
+      await screen.findByText(`Could not read the relay directory: ${DIR}/api/chain/info: 503`, {}, WAIT);
+      await waitFor(() => expect(rows()).toEqual([['0.02000000 BTC', host(w.config.relays[0])]]), WAIT);
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
   });
 });
 
