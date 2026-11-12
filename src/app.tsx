@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { Buyer, DEFAULTS, IndexedDBStore, lockFee, Wallet } from 'lattice-swap-driver';
 import { policyFor, type AppConfig } from './config';
 import { bounded, btc, parseBtc } from './format';
-import { byPrice, listOffers, offerFor } from './offers';
+import { byPrice, listOffers, MAX_FOUND_RELAY_BYTES, offerFor } from './offers';
 import { DIRECTORY_RETRY, pickFound, readDirectory } from './directory';
 import type { Balance, Listed, Status } from './types';
 import { download } from './download';
@@ -69,8 +69,9 @@ export function App({ config }: { config: AppConfig }) {
   const refreshes = useRef(0);
   /** The relays found on the directory, read once a page load: picked
    * anew each refresh, another pick would leave the last one's offers
-   * listed. A read that fails is tried again on a refresh once
-   * DIRECTORY_RETRY has passed. */
+   * listed. A read that fails or is cut short is tried again on a refresh
+   * once DIRECTORY_RETRY has passed; the relays it no longer picks have
+   * their offers dropped. */
   const found = useRef<{ relays: Promise<string[]>; retryAt: number } | null>(null);
 
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
@@ -210,7 +211,13 @@ export function App({ config }: { config: AppConfig }) {
         ({ relays, partial }) => {
           const picked = pickFound(config.relays, relays);
           const note = partial === null ? null : `Read the relay directory only in part: ${partial}`;
-          setOffers((was) => ({ ...was, found: picked, directory: note }));
+          if (partial !== null) read.retryAt = Date.now() + DIRECTORY_RETRY;
+          setOffers((was) => ({
+            ...was,
+            list: was.list.filter((l) => !was.found.includes(l.relay) || picked.includes(l.relay)),
+            found: picked,
+            directory: note,
+          }));
           return picked;
         },
         (e: Error) => {
@@ -235,7 +242,7 @@ export function App({ config }: { config: AppConfig }) {
     const latest = () => refresh === refreshes.current;
     const read = async (relay: string, own: boolean) => {
       try {
-        const listed = await listOffers(relay, config.network, genesis);
+        const listed = await listOffers(relay, config.network, genesis, own ? undefined : MAX_FOUND_RELAY_BYTES);
         if (!latest()) return;
         setOffers((was) => {
           const failed = { ...was.failed };

@@ -28,7 +28,7 @@ import {
   type World,
 } from './world';
 import { buildConfig, policyFor } from '../src/config';
-import { listOffers, MAX_OFFERS, MAX_RELAY_BYTES } from '../src/offers';
+import { listOffers, MAX_FOUND_RELAY_BYTES, MAX_OFFERS } from '../src/offers';
 import { DIRECTORY_RETRY, MAX_DIRECTORY_BYTES, MAX_DIRECTORY_RELAYS, pickFound, readDirectory } from '../src/directory';
 
 const WAIT = { timeout: 20_000 };
@@ -991,6 +991,46 @@ describe('several relays', () => {
       expect(reads).toBeLessThanOrEqual(10);
     });
 
+    test('no node is asked for twice, however wide the directory', async () => {
+      const { chain, tip, urls } = many(300);
+      const asked: string[] = [];
+      const read = await readDirectory({ node: DIR, chain: CHAIN }, async (url) => chain.answer(String(url), tip, { asked }));
+      expect(read.relays.sort()).toEqual(urls);
+      expect(asked).toHaveLength(chain.nodes.size);
+      expect(new Set(asked).size).toBe(asked.length);
+    });
+
+    test('a link that is no CID is never asked for; the relays read before it are kept', async () => {
+      const chain = new DirectoryChain();
+      const entry = chain.put({ prefix: `relay/${account()}`, value: 'https://r.example', children: [{ key: 'x', value: { rawCID: 'not a/cid' } }] });
+      const tip = chain.commit([{ key: 'r', value: { rawCID: entry } }], [entry]);
+      const answers: number[] = [];
+      const read = await readDirectory({ node: DIR, chain: CHAIN }, async (url) => {
+        const answer = chain.answer(String(url), tip);
+        answers.push(answer.status);
+        return answer;
+      });
+      expect(read).toEqual({ relays: ['https://r.example/'], partial: 'not a/cid is not a CID' });
+      expect(answers.every((status) => status === 200)).toBe(true);
+    });
+
+    test('a node without the many-Volume read is read a Volume at a time; one that says when to come back is waited on', async () => {
+      const { chain, tip, urls } = many(10);
+      let busy = true;
+      const read = await readDirectory({ node: DIR, chain: CHAIN }, async (url) => {
+        const { pathname } = new URL(String(url));
+        if (pathname === '/volumes') return new Response('not found', { status: 404 });
+        if (pathname.startsWith('/volumes/') && busy) {
+          busy = false;
+          return new Response('busy', { status: 503, headers: { 'Retry-After': '1' } });
+        }
+        return chain.answer(String(url), tip);
+      });
+      expect(read).toEqual({ relays: expect.any(Array), partial: null });
+      expect(read.relays.sort()).toEqual(urls);
+      expect(busy).toBe(false);
+    });
+
     test('a read cut short keeps the relays listed by then, as partial; one that lists none fails', async () => {
       const { chain, tip } = many(10);
       let reads = 0;
@@ -1009,9 +1049,11 @@ describe('several relays', () => {
     test('an answer past its cap is not read', async () => {
       const big = async () => new Response(new Uint8Array(MAX_DIRECTORY_BYTES + 1));
       await expect(readDirectory({ node: DIR, chain: CHAIN }, big)).rejects.toThrow(`an answer over ${MAX_DIRECTORY_BYTES} bytes`);
-      const relay = await serve(() => [200, 'x'.repeat(MAX_RELAY_BYTES + 1)]);
+      const relay = await serve(() => [200, 'x'.repeat(MAX_FOUND_RELAY_BYTES + 1)]);
       servers.push(relay);
-      await expect(listOffers(relay.url, 'regtest', 'genesis')).rejects.toThrow(`an answer over ${MAX_RELAY_BYTES} bytes`);
+      await expect(listOffers(relay.url, 'regtest', 'genesis', MAX_FOUND_RELAY_BYTES)).rejects.toThrow(`an answer over ${MAX_FOUND_RELAY_BYTES} bytes`);
+      // A relay of your own may list more.
+      await expect(listOffers(relay.url, 'regtest', 'genesis')).rejects.toThrow(/JSON/);
     });
 
     test('found relays are read beside your own: not yours again, each server once, at most the cap', () => {

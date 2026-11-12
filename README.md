@@ -47,8 +47,8 @@ The page shows only what the driver exposes. Each screen follows
   its choosing. The directory is read in batches (`GET /volumes?cids=`),
   waiting out a node's rate limit, within 15 seconds; a read cut short
   keeps the relays listed by then and says so. If it cannot be read, the
-  page says so, lists your relays' offers, and reads it again at most
-  once a minute. And Restore from a recovery file.
+  page says so and lists your relays' offers. A read that failed or was
+  cut short is tried again at most once a minute. And Restore from a recovery file.
 
 Nothing watches a swap while the page is closed. If a swap stalls, come back
 by the cancel time it shows, and keep the page open until the refund

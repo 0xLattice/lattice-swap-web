@@ -3,7 +3,7 @@
 // or name useless ones, but never move funds: an offer is its seller's,
 // and listed only on the relay it names.
 
-import { giveRelayNode, listRelays, type RelayListing } from 'lattice-swap-driver';
+import { giveRelayNode, isCid, listRelays, type RelayListing } from 'lattice-swap-driver';
 import { sameServer, type Directory } from './config';
 import { capped } from './offers';
 
@@ -26,7 +26,8 @@ export const MAX_BATCH = 32;
 export const MAX_DIRECTORY_BYTES = 4 << 20;
 
 /** How long to wait on a node that answers 429, as a public read port
- * does past its burst of Volume reads: it refills one a second. */
+ * does past its burst of Volume reads: it refills one a second. A 503
+ * with Retry-After waits as long as it says. */
 const RATE_WAIT = 1_000;
 
 type Fetch = typeof globalThis.fetch;
@@ -77,24 +78,28 @@ export interface DirectoryRead {
 export async function readDirectory({ node, chain }: Directory, fetch: Fetch = pageFetch, timeout = DIRECTORY_TIMEOUT): Promise<DirectoryRead> {
   const base = node.trim().replace(/\/+$/, '');
   const signal = AbortSignal.timeout(timeout);
-  const pause = () =>
+  const pause = (ms: number) =>
     new Promise((resolve, reject) => {
-      const timer = setTimeout(resolve, RATE_WAIT);
-      signal.addEventListener('abort', () => (clearTimeout(timer), reject(signal.reason)), { once: true });
+      const abort = () => (clearTimeout(timer), reject(signal.reason));
+      const timer = setTimeout(() => (signal.removeEventListener('abort', abort), resolve(undefined)), ms);
+      signal.addEventListener('abort', abort, { once: true });
     });
   /** The body of the answer to `route` on the directory's chain, asked
-   * again after a pause while the node says too many. No redirects, as the
-   * driver's clients follow none. */
-  async function get(route: string): Promise<Uint8Array> {
+   * again after a pause while the node says to wait: null for a 404 if
+   * `missing` is allowed. No redirects, as the driver's clients follow
+   * none. */
+  async function get(route: string, missing = false): Promise<Uint8Array | null> {
     const url = `${base}${route}${route.includes('?') ? '&' : '?'}chainPath=${encodeURIComponent(chain)}`;
     try {
       for (;;) {
         const response = await fetch(url, { cache: 'no-store', redirect: 'error', signal });
-        if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        if (response.status === 429 || (response.status === 503 && retryAfter !== null)) {
           await response.body?.cancel();
-          await pause();
+          await pause(response.status === 503 ? Number(retryAfter) * 1000 || RATE_WAIT : RATE_WAIT);
           continue;
         }
+        if (missing && response.status === 404) return null;
         if (!response.ok) throw new Error(`${base}${route.replace(/\?.*/, '')}: ${response.status}`);
         return await capped(response, MAX_DIRECTORY_BYTES);
       }
@@ -103,7 +108,7 @@ export async function readDirectory({ node, chain }: Directory, fetch: Fetch = p
       throw e;
     }
   }
-  const info = JSON.parse(new TextDecoder().decode(await get('/api/chain/info')));
+  const info = JSON.parse(new TextDecoder().decode((await get('/api/chain/info'))!));
   if (JSON.stringify(info.chain) !== JSON.stringify(chain.split('/'))) {
     throw new Error(`the node answered for another chain than ${chain}`);
   }
@@ -116,28 +121,43 @@ export async function readDirectory({ node, chain }: Directory, fetch: Fetch = p
   } catch (e) {
     throw new Error(reason(e));
   }
-  /** Nodes read and not yet given, by CID. */
+  /** Nodes read and not yet given to both listings, by CID. */
   const held = new Map<string, Uint8Array>();
+  /** The nodes given to `listing`. */
+  const given = new Set<string>();
   /** The listing given every node read as soon as it is read, in whatever
    * order: what it wants is what to ask for next, a level of the trie a
    * request rather than a node. Only `listing`, given each node in the
    * order it wants them, is the list. */
   let ahead = listing;
+  /** Whether the node reads many Volumes a request: one before lattice-node
+   * 1038e320d answers 404, and is asked one at a time. */
+  let batches = true;
+  /** `archive`'s root, copied out of the answer, which is not kept. */
+  const hold = (cid: string, archive: Uint8Array) => held.set(cid, rootOf(archive, cid).slice());
   try {
     while (listing.wants.length > 0) {
       const [next] = listing.wants;
+      // A link is the block author's: one that is no CID is never asked.
+      if (!isCid(next)) throw new Error(`${next} is not a CID`);
       if (!held.has(next)) {
         const read = () => ahead.wants.find((cid) => held.has(cid));
-        for (let cid = read(); cid !== undefined; cid = read()) ahead = giveRelayNode(ahead, cid, held.get(cid)!);
-        const batch = [next, ...ahead.wants.filter((cid) => cid !== next && !held.has(cid))].slice(0, MAX_BATCH);
-        for (const [cid, archive] of frames(await get(`/volumes?cids=${batch.join(',')}`), 0)) {
-          if (batch.includes(cid)) held.set(cid, rootOf(archive, cid));
+        for (let cid = read(); cid !== undefined; cid = read()) {
+          ahead = giveRelayNode(ahead, cid, held.get(cid)!);
+          if (given.has(cid)) held.delete(cid);
+        }
+        const batch = [next, ...ahead.wants.filter((cid) => cid !== next && !held.has(cid) && isCid(cid))].slice(0, MAX_BATCH);
+        const answer: Uint8Array | null = batches ? await get(`/volumes?cids=${batch.map(encodeURIComponent).join(',')}`, true) : null;
+        batches = answer !== null;
+        for (const [cid, archive] of answer === null ? [] : frames(answer, 0)) {
+          if (batch.includes(cid)) hold(cid, archive);
         }
         // One the node left out of the batch is asked for on its own.
-        if (!held.has(next)) held.set(next, rootOf(await get(`/volumes/${next}`), next));
+        if (!held.has(next)) hold(next, (await get(`/volumes/${encodeURIComponent(next)}`))!);
       }
       listing = giveRelayNode(listing, next, held.get(next)!);
-      held.delete(next);
+      given.add(next);
+      if (!ahead.wants.includes(next)) held.delete(next);
     }
     return { relays: listing.relays.map((relay) => relay.url), partial: null };
   } catch (e) {

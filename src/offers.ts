@@ -6,10 +6,16 @@ import type { Listed, Offer } from './types';
  * signature to check, and a relay could list without end. */
 export const MAX_OFFERS = 100;
 
-/** The most bytes of a relay's list read: MAX_OFFERS offers of a few KiB
- * each, with room to spare. A relay found on a directory is any host it
- * names, so its answer is cut off here rather than read whole. */
-export const MAX_RELAY_BYTES = 1 << 20;
+/** The most bytes of the list of a relay of the buyer's own read: a relay
+ * holds up to 10,000 offers of 1 to 4 KiB, and the list is parsed whole
+ * before its first MAX_OFFERS are read, so a busy honest relay's is read
+ * in full. */
+export const MAX_OWN_RELAY_BYTES = 48 << 20;
+
+/** The most bytes of the list of a relay found on a directory read: any
+ * host a directory names, up to MAX_DIRECTORY_RELAYS of them, so each is
+ * held to a thousand offers or so, ten times MAX_OFFERS. */
+export const MAX_FOUND_RELAY_BYTES = 4 << 20;
 
 /** The body of `response`, read as it streams; refused past `max` bytes,
  * the rest left unread. */
@@ -44,15 +50,15 @@ const cappedFetch =
 export const byPrice = (a: Listed, b: Listed) => a.offer.quote.price - b.offer.quote.price;
 
 /** The offers `relay` lists for `network` and the Nexus of `genesis`,
- * cheapest NEX first. Left out: an offer `decodeOffer` refuses, one with an
+ * cheapest NEX first, its list read up to `max` bytes. Left out: an offer `decodeOffer` refuses, one with an
  * amount JavaScript cannot hold exactly (above 2^53), which the driver
  * refuses too, any past the first MAX_OFFERS, one at a price of 0, whose NEX no swap can pay, and one
  * that names another relay: the swap runs through the relay the offer
  * names, which its seller does not sign, so `relay` could send the buyer
  * to one the buyer never chose. */
-export async function listOffers(relay: string, network: string, genesis: string): Promise<Listed[]> {
+export async function listOffers(relay: string, network: string, genesis: string, max = MAX_OWN_RELAY_BYTES): Promise<Listed[]> {
   const listed: Listed[] = [];
-  for (const text of (await offers(relay, cappedFetch(MAX_RELAY_BYTES))).slice(0, MAX_OFFERS)) {
+  for (const text of (await offers(relay, cappedFetch(max))).slice(0, MAX_OFFERS)) {
     let offer: Offer;
     try {
       offer = decodeOffer(text);

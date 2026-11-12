@@ -198,6 +198,11 @@ export class DirectoryChain {
   /** A block whose general state holds `entries`: the chain's tip. */
   block(entries: [string, string][]): string {
     const { children, links } = this.children(entries);
+    return this.commit(children, links);
+  }
+
+  /** A block whose general state's root has `children`, linking `links`. */
+  commit(children: object[], links: string[]): string {
     const root = this.put({ count: 0, children }, links);
     const state = this.put({ generalState: { rawCID: root } }, [root]);
     return this.put({ postState: { rawCID: state }, height: 1 }, [state]);
@@ -219,6 +224,8 @@ export class DirectoryChain {
     };
     const volume = (cid: string) => Buffer.concat([Buffer.from([0, 1]), frame(cid, this.nodes.get(cid)!)]);
     const cids = pathname === '/volumes' ? searchParams.get('cids')!.split(',') : [decodeURIComponent(pathname.replace(/^\/volumes\//, ''))];
+    // As lattice-node refuses a CID it could not be.
+    if (!cids.every((cid) => /^b[a-z2-7]+$/.test(cid))) return new Response('bad request', { status: 400 });
     const served = cids.filter((cid) => this.nodes.has(cid)).slice(0, perBatch);
     asked.push(...served);
     if (pathname !== '/volumes') return served.length === 0 ? new Response('not found', { status: 404 }) : new Response(volume(served[0]));
