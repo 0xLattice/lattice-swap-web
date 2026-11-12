@@ -204,22 +204,24 @@ export class DirectoryChain {
   }
 
   /** The node's answer to `url`, a node hosting the chain `chain` whose
-   * tip is `tip`: its chain info, or a Volume holding only the node asked
-   * for, each CID asked noted in `asked`. */
-  answer(url: string, tip: string, chain = ['Nexus', 'testnet', 'swap-relays'], asked: string[] = []): Response {
-    const { pathname } = new URL(url);
+   * tip is `tip`: its chain info, or Volumes each holding only the node it
+   * is named by, one asked for alone or at most `perBatch` of those asked
+   * for together, each CID served noted in `asked`. */
+  answer(url: string, tip: string, { chain = ['Nexus', 'testnet', 'swap-relays'], asked = [] as string[], perBatch = Infinity } = {}): Response {
+    const { pathname, searchParams } = new URL(url);
     if (pathname === '/api/chain/info') return Response.json({ chain, height: '1', tipCID: tip });
-    const cid = decodeURIComponent(pathname.replace(/^\/volumes\//, ''));
-    const bytes = this.nodes.get(cid);
-    if (bytes === undefined) return new Response('not found', { status: 404 });
-    asked.push(cid);
-    const name = Buffer.from(cid);
-    const archive = Buffer.alloc(2 + 2 + name.length + 4 + bytes.length);
-    archive.writeUInt16BE(1, 0);
-    archive.writeUInt16BE(name.length, 2);
-    name.copy(archive, 4);
-    archive.writeUInt32BE(bytes.length, 4 + name.length);
-    Buffer.from(bytes).copy(archive, 8 + name.length);
-    return new Response(archive);
+    const frame = (name: string, bytes: Uint8Array) => {
+      const head = Buffer.alloc(2 + name.length + 4);
+      head.writeUInt16BE(name.length, 0);
+      head.write(name, 2);
+      head.writeUInt32BE(bytes.length, 2 + name.length);
+      return Buffer.concat([head, bytes]);
+    };
+    const volume = (cid: string) => Buffer.concat([Buffer.from([0, 1]), frame(cid, this.nodes.get(cid)!)]);
+    const cids = pathname === '/volumes' ? searchParams.get('cids')!.split(',') : [decodeURIComponent(pathname.replace(/^\/volumes\//, ''))];
+    const served = cids.filter((cid) => this.nodes.has(cid)).slice(0, perBatch);
+    asked.push(...served);
+    if (pathname !== '/volumes') return served.length === 0 ? new Response('not found', { status: 404 }) : new Response(volume(served[0]));
+    return new Response(Buffer.concat(served.map((cid) => frame(cid, volume(cid)))));
   }
 }

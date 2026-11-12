@@ -23,8 +23,8 @@ export function NoRelay() {
 }
 
 /** Each relay whose offers could not be read: the others' are listed.
- * And why the relay directory could not be read, if it could not: the
- * buyer's own relays are listed without it. */
+ * And why the relay directory could not be read, or was read in part, if
+ * so: the buyer's own relays are listed without it. */
 export function RelayFailures({ offers }: { offers: OffersState }) {
   return (
     <>
@@ -35,12 +35,15 @@ export function RelayFailures({ offers }: { offers: OffersState }) {
       ))}
       {offers.directory !== null && (
         <p role="status" class="small muted">
-          Could not read the relay directory: {bounded(offers.directory)}
+          {bounded(offers.directory)}
         </p>
       )}
     </>
   );
 }
+
+/** Whether the relay directory could not be read, so it found no relay. */
+export const directoryFailed = (offers: OffersState) => offers.directory !== null && offers.found.length === 0;
 
 export function SwapForm(props: {
   relays: string[];
@@ -69,7 +72,7 @@ export function SwapForm(props: {
   const validAddress = address !== '' && isCid(address);
   return (
     <section class="narrow">
-      {props.relays.length === 0 && !props.directory && <NoRelay />}
+      {props.relays.length === 0 && (!props.directory || directoryFailed(offers)) && <NoRelay />}
       <RelayFailures offers={offers} />
       {props.pickGone && (
         <div role="alert" class="box strong-border">

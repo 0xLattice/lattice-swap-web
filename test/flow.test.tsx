@@ -28,8 +28,8 @@ import {
   type World,
 } from './world';
 import { buildConfig, policyFor } from '../src/config';
-import { listOffers, MAX_OFFERS } from '../src/offers';
-import { MAX_DIRECTORY_RELAYS, pickFound, readDirectory } from '../src/directory';
+import { listOffers, MAX_OFFERS, MAX_RELAY_BYTES } from '../src/offers';
+import { DIRECTORY_RETRY, MAX_DIRECTORY_BYTES, MAX_DIRECTORY_RELAYS, pickFound, readDirectory } from '../src/directory';
 
 const WAIT = { timeout: 20_000 };
 const sats = (amount: string) => parseBtc(amount)!;
@@ -936,9 +936,12 @@ describe('several relays', () => {
       const accounts = pairs.flatMap((group) => group.slice(0, 2));
       const chain = new DirectoryChain();
       const tip = chain.block(accounts.map((a, i) => [`relay/${a}`, `https://r${i}.example`]));
+      // One node an answer, so the nodes asked for are the nodes given, in
+      // order.
       const asked: string[] = [];
-      const relays = await readDirectory({ node: DIR, chain: CHAIN }, async (url) => chain.answer(String(url), tip, undefined, asked));
-      expect(relays.sort()).toEqual(accounts.map((_, i) => `https://r${i}.example/`));
+      const read = await readDirectory({ node: DIR, chain: CHAIN }, async (url) => chain.answer(String(url), tip, { asked, perBatch: 1 }));
+      expect(read.partial).toBeNull();
+      expect(read.relays.sort()).toEqual(accounts.map((_, i) => `https://r${i}.example/`));
       expect(asked).toHaveLength(chain.nodes.size);
       expect(new Set(asked).size).toBe(asked.length);
       asked.forEach((cid, i) => {
@@ -951,9 +954,64 @@ describe('several relays', () => {
       const chain = new DirectoryChain();
       const tip = chain.block([[`relay/${account()}`, 'https://r.example']]);
       const asked: string[] = [];
-      const read = readDirectory({ node: DIR, chain: CHAIN }, async (url) => chain.answer(String(url), tip, ['Nexus', 'other'], asked));
+      const read = readDirectory({ node: DIR, chain: CHAIN }, async (url) => chain.answer(String(url), tip, { chain: ['Nexus', 'other'], asked }));
       await expect(read).rejects.toThrow(`the node answered for another chain than ${CHAIN}`);
       expect(asked).toEqual([]);
+    });
+
+    /** A directory of `n` relays, `https://r<i>.example`. */
+    function many(n: number) {
+      const chain = new DirectoryChain();
+      const tip = chain.block(Array.from({ length: n }, (_, i): [string, string] => [`relay/${account()}`, `https://r${i}.example`]));
+      return { chain, tip, urls: Array.from({ length: n }, (_, i) => `https://r${i}.example/`).sort() };
+    }
+
+    test('a node that rate-limits its Volume reads is read in batches, waited on past its burst', async () => {
+      const { chain, tip, urls } = many(40);
+      // A public read port's Volume limit, scaled down: a burst of 3,
+      // then one a second, refused with 429.
+      let tokens = 3;
+      let last = Date.now();
+      let reads = 0;
+      let refused = 0;
+      const read = await readDirectory({ node: DIR, chain: CHAIN }, async (url) => {
+        if (!new URL(String(url)).pathname.startsWith('/volumes')) return chain.answer(String(url), tip);
+        tokens = Math.min(3, tokens + (Date.now() - last) / 1000);
+        last = Date.now();
+        if (tokens < 1) return (refused++, new Response('', { status: 429 }));
+        tokens--;
+        reads++;
+        return chain.answer(String(url), tip);
+      });
+      expect(read).toEqual({ relays: expect.any(Array), partial: null });
+      expect(read.relays.sort()).toEqual(urls);
+      expect(refused).toBeGreaterThan(0);
+      // A request a level of the trie, not a node: within a public port's
+      // burst of 10.
+      expect(reads).toBeLessThanOrEqual(10);
+    });
+
+    test('a read cut short keeps the relays listed by then, as partial; one that lists none fails', async () => {
+      const { chain, tip } = many(10);
+      let reads = 0;
+      const after = (n: number) => async (url: RequestInfo | URL) =>
+        new URL(String(url)).pathname.startsWith('/volumes') && ++reads > n
+          ? new Response('down', { status: 503 })
+          : chain.answer(String(url), tip, { perBatch: 1 });
+      const read = await readDirectory({ node: DIR, chain: CHAIN }, after(chain.nodes.size - 2));
+      expect(read.relays.length).toBeGreaterThan(0);
+      expect(read.relays.length).toBeLessThan(10);
+      expect(read.partial).toBe(`${DIR}/volumes: 503`);
+      reads = 0;
+      await expect(readDirectory({ node: DIR, chain: CHAIN }, after(2))).rejects.toThrow(`${DIR}/volumes: 503`);
+    });
+
+    test('an answer past its cap is not read', async () => {
+      const big = async () => new Response(new Uint8Array(MAX_DIRECTORY_BYTES + 1));
+      await expect(readDirectory({ node: DIR, chain: CHAIN }, big)).rejects.toThrow(`an answer over ${MAX_DIRECTORY_BYTES} bytes`);
+      const relay = await serve(() => [200, 'x'.repeat(MAX_RELAY_BYTES + 1)]);
+      servers.push(relay);
+      await expect(listOffers(relay.url, 'regtest', 'genesis')).rejects.toThrow(`an answer over ${MAX_RELAY_BYTES} bytes`);
     });
 
     test('found relays are read beside your own: not yours again, each server once, at most the cap', () => {
@@ -991,6 +1049,56 @@ describe('several relays', () => {
       render(<App config={{ ...w.config, directory: { node: DIR, chain: CHAIN } }} />);
       tab(/^Offers/);
       await screen.findByText(`Could not read the relay directory: ${DIR}/api/chain/info: 503`, {}, WAIT);
+      await waitFor(() => expect(rows()).toEqual([['0.02000000 BTC', host(w.config.relays[0])]]), WAIT);
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.queryByText('No relay configured')).toBeNull();
+    });
+
+    test('a directory that failed is read again on a refresh only once a minute has passed', async () => {
+      const w = await world();
+      let infos = 0;
+      route((url) => (url.includes('/api/chain/info') && infos++, new Response('down', { status: 503 })));
+      render(<App config={{ ...w.config, directory: { node: DIR, chain: CHAIN } }} />);
+      await screen.findByText(`Could not read the relay directory: ${DIR}/api/chain/info: 503`, {}, WAIT);
+      tab(/^Offers/);
+      tab(/^Swap/);
+      tab(/^Offers/);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(infos).toBe(1);
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now + DIRECTORY_RETRY);
+      try {
+        tab(/^Swap/);
+        await until(() => infos === 2);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    test('with no relays of your own and a directory that cannot be read, the page says how to add one', async () => {
+      const w = await world({ relay: false });
+      route(() => new Response('down', { status: 503 }));
+      render(<App config={{ ...w.config, directory: { node: DIR, chain: CHAIN } }} />);
+      expect(screen.queryByText('No relay configured')).toBeNull();
+      await screen.findByText('No relay configured', {}, WAIT);
+      expect(screen.getByText(`Could not read the relay directory: ${DIR}/api/chain/info: 503`)).toBeTruthy();
+    });
+
+    test('a found relay that fails has its offers dropped, and is not named', async () => {
+      const w = await world();
+      let up = true;
+      const offer = JSON.parse(cheaper(naming(w.offer, 'https://found.example')));
+      const found = await serve((_method: string, path: string) => (path !== '/offers' ? undefined : up ? [200, [offer]] : [503, 'down']));
+      servers.push(found);
+      const chain = new DirectoryChain();
+      const tip = chain.block([[`relay/${account()}`, 'https://found.example']]);
+      route((url) => chain.answer(url, tip), { 'https://found.example': found.url });
+      render(<App config={{ ...w.config, directory: { node: DIR, chain: CHAIN } }} />);
+      tab(/^Offers/);
+      await waitFor(() => expect(rows()).toHaveLength(2), WAIT);
+      up = false;
+      tab(/^Swap/);
+      tab(/^Offers/);
       await waitFor(() => expect(rows()).toEqual([['0.02000000 BTC', host(w.config.relays[0])]]), WAIT);
       expect(screen.queryByRole('alert')).toBeNull();
     });

@@ -42,9 +42,13 @@ The page shows only what the driver exposes. Each screen follows
   the tip, picked at random, are read after yours, and their offers marked
   "via directory". The tip is that node's word, so it can hide relays or
   name useless ones, but not move funds: an offer is signed by its seller
-  and listed only on the relay it names. If the directory cannot be read,
-  the page says so and lists your relays' offers. And Restore from a
-  recovery file.
+  and listed only on the relay it names. Its relays are contacted from
+  your browser, so a directory you don't trust can point you at hosts of
+  its choosing. The directory is read in batches (`GET /volumes?cids=`),
+  waiting out a node's rate limit, within 15 seconds; a read cut short
+  keeps the relays listed by then and says so. If it cannot be read, the
+  page says so, lists your relays' offers, and reads it again at most
+  once a minute. And Restore from a recovery file.
 
 Nothing watches a swap while the page is closed. If a swap stalls, come back
 by the cancel time it shows, and keep the page open until the refund

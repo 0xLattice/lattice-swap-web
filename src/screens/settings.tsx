@@ -315,6 +315,10 @@ export function Settings({
           A node hosting the relay directory's chain: up to {MAX_DIRECTORY_RELAYS} of the relays it lists are read beside
           yours. You trust the node for which relays it lists, not for your funds. Empty for none.
         </span>
+        <span class="small muted">
+          The directory's relays are contacted from your browser, and a directory you don't trust can point you at hosts
+          of its choosing.
+        </span>
       </div>
       {refused !== null && (
         <p role="alert" class="error">

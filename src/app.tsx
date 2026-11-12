@@ -6,7 +6,7 @@ import { Buyer, DEFAULTS, IndexedDBStore, lockFee, Wallet } from 'lattice-swap-d
 import { policyFor, type AppConfig } from './config';
 import { bounded, btc, parseBtc } from './format';
 import { byPrice, listOffers, offerFor } from './offers';
-import { pickFound, readDirectory } from './directory';
+import { DIRECTORY_RETRY, pickFound, readDirectory } from './directory';
 import type { Balance, Listed, Status } from './types';
 import { download } from './download';
 import { SwapForm } from './screens/swap';
@@ -44,8 +44,8 @@ export interface OffersState {
   loaded: boolean;
   /** The relays found on the relay directory whose offers are read. */
   found: string[];
-  /** Why the relay directory could not be read; null if it was, or none
-   * is set. */
+  /** What to say of the relay directory: why it could not be read, or was
+   * read only in part; null if it was read whole, or none is set. */
   directory: string | null;
 }
 
@@ -69,8 +69,9 @@ export function App({ config }: { config: AppConfig }) {
   const refreshes = useRef(0);
   /** The relays found on the directory, read once a page load: picked
    * anew each refresh, another pick would leave the last one's offers
-   * listed. A read that fails is tried again on the next refresh. */
-  const found = useRef<Promise<string[]> | null>(null);
+   * listed. A read that fails is tried again on a refresh once
+   * DIRECTORY_RETRY has passed. */
+  const found = useRef<{ relays: Promise<string[]>; retryAt: number } | null>(null);
 
   const genesis = config.nexusGenesis ?? DEFAULTS.nexusGenesis;
   const driverConfig = useMemo(
@@ -203,26 +204,31 @@ export function App({ config }: { config: AppConfig }) {
   function directoryRelays(): Promise<string[]> {
     const directory = config.directory;
     if (!directory?.node) return Promise.resolve([]);
-    found.current ??= readDirectory(directory, config.driver?.fetch as typeof fetch | undefined).then(
-      (relays) => {
-        const picked = pickFound(config.relays, relays);
-        setOffers((was) => ({ ...was, found: picked, directory: null }));
-        return picked;
-      },
-      (e: Error) => {
-        found.current = null;
-        setOffers((was) => ({ ...was, directory: e.message }));
-        return [];
-      },
-    );
-    return found.current;
+    if (found.current === null || Date.now() >= found.current.retryAt) {
+      const read = { relays: Promise.resolve<string[]>([]), retryAt: Infinity };
+      read.relays = readDirectory(directory, config.driver?.fetch as typeof fetch | undefined).then(
+        ({ relays, partial }) => {
+          const picked = pickFound(config.relays, relays);
+          const note = partial === null ? null : `Read the relay directory only in part: ${partial}`;
+          setOffers((was) => ({ ...was, found: picked, directory: note }));
+          return picked;
+        },
+        (e: Error) => {
+          read.retryAt = Date.now() + DIRECTORY_RETRY;
+          setOffers((was) => ({ ...was, directory: `Could not read the relay directory: ${e.message}` }));
+          return [];
+        },
+      );
+      found.current = read;
+    }
+    return found.current.relays;
   }
 
   /** Reads each relay's offers, shown as each answers: one slow or
    * failing holds back none of the others'. The buyer's own are read at
-   * once, then those found on the directory, once it is read. One that
-   * fails keeps the offers it listed last, and is named if it is the
-   * buyer's own. An answer to an earlier refresh than the latest is
+   * once, then those found on the directory, once it is read. One of the
+   * buyer's own that fails keeps the offers it listed last, and is named;
+   * one found that fails has its offers dropped, unnamed. An answer to an earlier refresh than the latest is
    * dropped: it is older than what the latest shows. */
   async function refreshOffers() {
     const refresh = ++refreshes.current;
@@ -237,7 +243,9 @@ export function App({ config }: { config: AppConfig }) {
           return { ...was, list: was.list.filter((l) => l.relay !== relay).concat(listed).sort(byPrice), failed };
         });
       } catch (e) {
-        if (latest() && own) setOffers((was) => ({ ...was, failed: { ...was.failed, [relay]: (e as Error).message } }));
+        if (!latest()) return;
+        if (own) setOffers((was) => ({ ...was, failed: { ...was.failed, [relay]: (e as Error).message } }));
+        else setOffers((was) => ({ ...was, list: was.list.filter((l) => l.relay !== relay) }));
       }
     };
     await Promise.all([
