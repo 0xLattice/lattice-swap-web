@@ -94,9 +94,9 @@ export async function readDirectory({ node, chain }: Directory, fetch: Fetch = p
       for (;;) {
         const response = await fetch(url, { cache: 'no-store', redirect: 'error', signal });
         const retryAfter = response.headers.get('Retry-After');
-        // A browser hides Retry-After cross-origin, so any 503 waits; never
-        // less than a second, whatever the node says.
-        if (response.status === 429 || response.status === 503) {
+        // A 503 waits only when it says to (a browser hides Retry-After
+        // cross-origin, where a 503 is a node down); never under a second.
+        if (response.status === 429 || (response.status === 503 && retryAfter !== null)) {
           await response.body?.cancel();
           await pause(Math.max(RATE_WAIT, Number(retryAfter) * 1000 || 0));
           continue;
