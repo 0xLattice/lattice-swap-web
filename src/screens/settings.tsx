@@ -166,7 +166,7 @@ export function Settings({
           : !isRelayUrl(nextDirectory.node)
             ? { ok: false, text: `${nextDirectory.node} is not a node's URL (https://…)` }
             : !/^[^/]+(\/[^/]+)*$/.test(nextDirectory.chain)
-              ? { ok: false, text: 'name the chain of the directory, as Nexus/testnet/swap-relays' }
+              ? { ok: false, text: 'name the chain of the directory, as Nexus/swap-relays' }
               : await check('directory', nextDirectory.node);
       if (closed.signal.aborted) return;
       if (!result.ok) {

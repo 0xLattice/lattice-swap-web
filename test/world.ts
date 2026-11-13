@@ -212,7 +212,7 @@ export class DirectoryChain {
    * tip is `tip`: its chain info, or Volumes each holding only the node it
    * is named by, one asked for alone or at most `perBatch` of those asked
    * for together, each CID served noted in `asked`. */
-  answer(url: string, tip: string, { chain = ['Nexus', 'testnet', 'swap-relays'], asked = [] as string[], perBatch = Infinity } = {}): Response {
+  answer(url: string, tip: string, { chain = ['Nexus', 'swap-relays'], asked = [] as string[], perBatch = Infinity } = {}): Response {
     const { pathname, searchParams } = new URL(url);
     if (pathname === '/api/chain/info') return Response.json({ chain, height: '1', tipCID: tip });
     const frame = (name: string, bytes: Uint8Array) => {
