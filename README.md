@@ -69,12 +69,12 @@ environment variable of the same name overrides them:
 | `VITE_NEXUS_GENESIS` | the driver's |
 | `VITE_RELAY` | none: the page says no relay is configured |
 | `VITE_RELAY_DIRECTORY` | none: no relay directory is read |
-| `VITE_RELAY_DIRECTORY_CHAIN` | none (signet: `Nexus/testnet/swap-relays`) |
+| `VITE_RELAY_DIRECTORY_CHAIN` | `Nexus/swap-relays` (signet too) |
 
-No public node is known to host a relay directory's chain, so neither
-build reads one unless the buyer sets one in Settings; the signet build
-fills in the test directory's chain. Mainnet sets no chain until a mainnet
-directory exists.
+Neither build sets a node for the relay directory, so neither reads one
+unless the buyer sets a node in Settings; both fill in the directory's
+chain, `Nexus/swap-relays`. There is one Nexus, so signet and mainnet
+swaps share the one directory.
 
 `npm run build` writes the mainnet page to `dist/`. `npm run build:signet`
 writes the signet page to `dist-signet/`.

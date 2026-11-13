@@ -776,19 +776,19 @@ describe('settings', () => {
     );
     set('Relay directory', node);
     click('Save and reload');
-    await screen.findByText('Not saved: relay directory: name the chain of the directory, as Nexus/testnet/swap-relays', {}, WAIT);
+    await screen.findByText('Not saved: relay directory: name the chain of the directory, as Nexus/swap-relays', {}, WAIT);
     set('Its chain', 'Nexus/other');
     click('Save and reload');
     await screen.findByText('Not saved: relay directory: refused: the node answered for another chain than Nexus/other', {}, WAIT);
-    set('Its chain', 'Nexus/testnet/swap-relays');
+    set('Its chain', 'Nexus/swap-relays');
     click('Save and reload');
     await waitFor(() => expect(reload).toHaveBeenCalledOnce(), WAIT);
-    expect(saved('directory')).toBe(JSON.stringify({ node, chain: 'Nexus/testnet/swap-relays' }));
+    expect(saved('directory')).toBe(JSON.stringify({ node, chain: 'Nexus/swap-relays' }));
     vi.stubEnv('VITE_NETWORK', 'regtest');
-    expect(buildConfig().directory).toEqual({ node, chain: 'Nexus/testnet/swap-relays' });
+    expect(buildConfig().directory).toEqual({ node, chain: 'Nexus/swap-relays' });
 
     // Turned off on a build that sets one: kept as none, not the build's.
-    const directory = { node, chain: 'Nexus/testnet/swap-relays' };
+    const directory = { node, chain: 'Nexus/swap-relays' };
     vi.stubEnv('VITE_RELAY_DIRECTORY', node);
     vi.stubEnv('VITE_RELAY_DIRECTORY_CHAIN', directory.chain);
     cleanup();
@@ -905,7 +905,7 @@ describe('several relays', () => {
 
   describe('found on a relay directory', () => {
     const DIR = 'https://dir.example';
-    const CHAIN = 'Nexus/testnet/swap-relays';
+    const CHAIN = 'Nexus/swap-relays';
     const realFetch = globalThis.fetch;
     const account = () => call('newNexKey').address as string;
     /** The page's fetch: the directory's node at DIR answering as

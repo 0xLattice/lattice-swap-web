@@ -34,7 +34,7 @@ export interface AppConfig {
 export type Setting = 'esplora' | 'nexus';
 
 /** A relay directory: a node hosting the directory's chain, and the
- * chain's path, as `Nexus/testnet/swap-relays`. */
+ * chain's path, as `Nexus/swap-relays`. */
 export interface Directory {
   node: string;
   chain: string;
